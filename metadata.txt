@@ -1,0 +1,9 @@
+[general]
+name=Generate Presentations
+description=
+about=
+version=0.1
+qgisMinimumVersion=3.0
+author=Peter Mader
+email=peter.mader@deutsche-netzplanung.de
+repository=URL to the code repository

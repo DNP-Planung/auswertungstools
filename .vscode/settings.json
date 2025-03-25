@@ -1,0 +1,25 @@
+{
+    "editor.rulers": [120],
+    "editor.wordWrapColumn": 120,
+    "python.envFile": "${workspaceFolder}/.env",
+    "pyqt-integration.qtdesigner.path": "C:\\OSGeo4W\\bin\\qgis-designer.bat",
+    "pyqt-integration.pyuic.cmd": "C:\\Program Files\\QGIS 3.38.0\\apps\\Python312\\Scripts\\pyuic5.exe",
+    "pyqt-integration.pylupdate.cmd": "C:\\Program Files\\QGIS 3.38.0\\apps\\Python312\\Scripts\\pylupdate5.exe",
+    "pyqt-integration.pyrcc.cmd": "C:\\Program Files\\QGIS 3.38.0\\apps\\Python312\\Scripts\\pyrcc5.exe",
+    "pyqt-integration.pyrcc.compile.filepath": "${workspace}/${qrc_name}.py",
+    "pyqt-integration.linguist.cmd": "C:\\Program Files\\Qt Linguist\\linguist.exe",
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "cSpell.words": [
+        "cbbs",
+        "configfile",
+        "creds",
+        "geofilter",
+        "logdir",
+        "msgbar",
+        "pgservicefile",
+        "quicksearches",
+        "vlayout"
+    ]
+}
