@@ -72,14 +72,6 @@
 	\begin{minipage}{\dimexpr0.99\linewidth-#3}\BODY\end{minipage}
 \end{frame}}
 
-% read two CSV files into arrays
-\usepackage{readarray}
-\readarraysepchar{,}
-\readdef{../oberflaechenauswertung.csv}\oberflaechenauswertung
-\readarray*\oberflaechenauswertung\oberflaechen[-,\ncols]
-\readdef{../adressauswertung.csv}\adressauswertung
-\readarray*\adressauswertung\adressen[-,\ncols]
-
 % logo in the bottom right corner
 \logo{\includegraphics[width=.1\textwidth]{../Bilder/Logo.png}}
 \newcommand{\nologo}{\setbeamertemplate{logo}{}} % command to set the logo to nothing
@@ -101,6 +93,7 @@
 \input{Commands.tex}
 \input{PointsOfInterest.tex}
 \input{AdressStatistik.tex}
+\input{TrenchStatistik.tex}
 
 
 \begin{document}
@@ -186,27 +179,11 @@
 \begin{mapframe}{Ergebnis Trenches -- Übersicht}{../Karten/trenches.pdf}{.5\linewidth}
 	\centering
 	\resizebox{\textwidth}{!}{
-		\begin{tblr}{
-			colspec={l@{}lrrrr},
-			row{1,2}={bg=dnpblue,fg=white,font=\bfseries},
-			row{3,9,12}={bg=dnplightblue,fg=black,font=\bfseries}
-		}
-			& Tiefbau gesamt &\oberflaechen[1,3]~m &&& \\
-			&&& im Straßenkörper & mit Handschachtung & in Privatweg \\
-			& Offener Tiefbau								& \oberflaechen[3,3]~m & \oberflaechen[3,5]~m & \oberflaechen[3,7]~m & \oberflaechen[3,9]~m \\
-			\colorrule{trenchred} 		& Asphalt 			& \oberflaechen[4,3]~m & \oberflaechen[4,5]~m & \oberflaechen[4,7]~m & \oberflaechen[4,9]~m \\
-			\colorrule{trenchblue} 		& Pflaster 			& \oberflaechen[5,3]~m & \oberflaechen[5,5]~m & \oberflaechen[5,7]~m & \oberflaechen[5,9]~m \\
-			\colorrule{trenchgreen} 	& Unbefestigt		& \oberflaechen[6,3]~m & \oberflaechen[6,5]~m & \oberflaechen[6,7]~m & \oberflaechen[6,9]~m \\
-			\colorrule{trenchpurple} 	& Mosaikpflaster	& \oberflaechen[7,3]~m & \oberflaechen[7,5]~m & \oberflaechen[7,7]~m & \oberflaechen[7,9]~m \\
-			\colorrule{trenchlightblue} & Kopfsteinpflaster	& \oberflaechen[8,3]~m & \oberflaechen[8,5]~m & \oberflaechen[8,7]~m & \oberflaechen[8,9]~m \\
-			& Geschlossener Tiefbau & \oberflaechen[10,3]~m &&& \oberflaechen[10,9]~m \\
-			\colorrule{trenchorange} 	& Rohrpressung 		& \oberflaechen[11,3]~m &&& \oberflaechen[11,9]~m \\
-			\colorrule{trenchspuelbohrung} & Spülbohrung 	& \oberflaechen[12,3]~m &&& \oberflaechen[12,9]~m \\
-			& Sonderquerungen &&&& \\
-			& Bahn & \oberflaechen[15,3]~St. &&& \\
-			& Bachquerung & \oberflaechen[16,3]~St. &&& \\
-		\end{tblr}
-	}
+		\trenchStatistik
+	} \\\vspace{.5cm}
+	\hfill\begin{minipage}{.98\textwidth} \tiny
+	\textbf{Sonderquerungen}: \sonderquerungen
+	\end{minipage}\hfill
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Trenches -- Analysebeispiel}{../Karten/trenches.pdf}{.6\textwidth}

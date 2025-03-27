@@ -219,14 +219,47 @@ class GeneratePresentation:
         for condition in conditions:
             row = []
             for column in columns:
-                row.append(GeneratePresentation.filtered_column_sum(layer, f'{condition} and {column}'))
+                row.append(GeneratePresentation.filtered_length_sum(layer, f'{condition} and {column}'))
             result.append(row)
         
-        totalRow = []
-        for column in range(len(columns) + 1):
-            totalRow.append(sum([row[column] for row in result]))
-        result.append(totalRow)
+        offenerTiefbau = []
+        for column in range(len(columns)):
+            offenerTiefbau.append(sum([row[column] for row in result]))
+        result = [offenerTiefbau] + result
+
+        rohrpressung = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'r\'')
+        rohrpressung_privat = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'r\' and "Privatweg"')
+        spuelbohrung = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'h\'')
+        spuelbohrung_privat = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'h\' and "Privatweg"')
+        geschlossener_tiefbau = [rohrpressung + spuelbohrung, rohrpressung_privat + spuelbohrung_privat]
+
+        result_strings = [str(offenerTiefbau[0] + geschlossener_tiefbau[0])]
+        result_strings += ['~m & '.join([str(x) for x in row]) + '~m' for row in result]
+        result_strings.append(f'{geschlossener_tiefbau[0]}~m &&& {geschlossener_tiefbau[1]}~m')
+        result_strings.append(f'{rohrpressung}~m &&& {rohrpressung_privat}~m')
+        result_strings.append(f'{spuelbohrung}~m &&& {spuelbohrung_privat}~m')
         print(result)
+
+        with open(destination, "w") as f:
+            f.write('''\\newcommand\\trenchStatistik{{
+            \\begin{{tblr}}{{
+                colspec={{l@{{}}lrrrr}},
+                row{{1,2}}={{bg=dnpblue,fg=white,font=\\bfseries}},
+                row{{3,9,12}}={{bg=dnplightblue,fg=black,font=\\bfseries}}
+            }}
+                & Tiefbau gesamt &{0}~m &&& \\\\
+                &&& im Straßenkörper & mit Handschachtung & in Privatweg \\\\
+                & Offener Tiefbau								    & {1} \\\\
+                \\colorrule{{trenchred}} 		& Asphalt 			& {2} \\\\
+                \\colorrule{{trenchblue}} 		& Pflaster 			& {3} \\\\
+                \\colorrule{{trenchgreen}} 	    & Unbefestigt		& {4} \\\\
+                \\colorrule{{trenchpurple}} 	& Mosaikpflaster	& {5} \\\\
+                \\colorrule{{trenchlightblue}}  & Kopfsteinpflaster	& {6} \\\\
+                & Geschlossener Tiefbau                             & {7} \\\\
+                \\colorrule{{trenchorange}} 	& Rohrpressung 		& {8} \\\\
+                \\colorrule{{trenchspuelbohrung}} & Spülbohrung 	& {9} \\\\
+            \\end{{tblr}}
+            }}'''.format(*result_strings))
 
     def instantiate_template(self):
         fotopunkt = GeneratePresentation.find_layer('Fotopunkt')
