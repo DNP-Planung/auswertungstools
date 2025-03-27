@@ -10,6 +10,7 @@
 \definecolor{dnpblue}{RGB}{0,26,174}
 \definecolor{dnplightblue}{RGB}{221,226,255}
 \definecolor{addressgreen}{RGB}{84,174,74}
+\definecolor{addressyellow}{HTML}{ffff00}
 \definecolor{addressorange}{RGB}{228,187,114}
 \definecolor{addressblue}{RGB}{72,123,182}
 \definecolor{addresspink}{RGB}{201,23,199}
@@ -28,6 +29,21 @@
 \usepackage{tikz}
 \usetikzlibrary{fadings,calc}
 \tikzfading[name=dnpfading,top color=transparent!100,bottom color=transparent!0]
+
+\tikzset{fotopunkt/.style={scale=.7,inner sep=1pt,text=white,draw=white,fill=dnpblue,circle}}
+% draw the zoom triangle between a point of interest and its photo
+%  * label of the point (#1)
+%  * photo (as a TikZ node) (#2)
+%  * x, y coordinates of the point within the current map (#3, #4)
+\newcommand\zoomtriangle[4]{
+	\tikz[remember picture,overlay]{
+		\coordinate (top) at ($(map.north west)!#3!(map.north east)$);
+		\coordinate (bottom) at ($(map.south west)!#3!(map.south east)$);
+		\coordinate (target) at ($(top)!#4!(bottom)$);
+		\fill[gray,opacity=.35] (target) -- (#2.north west) -- (#2.south west) -- cycle;
+		\node[fotopunkt] at (target) {#1};
+	}
+}
 
 % dot to signify an address
 \newcommand\colordot[1]{\tikz{\draw[white,opacity=0] (0,0) -- (0,-.12);\draw[white,opacity=0] (0,0) -- (.2,0);\node[inner sep=-2,circle,draw=black,fill=#1] at (0,0) {};}}
@@ -49,11 +65,9 @@
 %     (content of the right column)
 % \end{mapframe}
 \usepackage{environ,calc}
-\newcounter{mapframes}
 \NewEnviron{mapframe}[3]{\begin{frame}{#1}
-	\addtocounter{mapframes}{1}
 	\begin{minipage}{#3}
-		\tikz[remember picture]{\node[inner sep=0] (map\themapframes) at (0, 0) {\includegraphics[width=\linewidth]{#2}};}
+		\tikz[remember picture]{\node[inner sep=0] (map) at (0, 0) {\includegraphics[width=\linewidth]{#2}};}
 	\end{minipage}\hfill%
 	\begin{minipage}{\dimexpr0.99\linewidth-#3}\BODY\end{minipage}
 \end{frame}}
@@ -83,9 +97,10 @@
 \setbeamercolor{palette secondary}{bg=dnpblue,fg=white}
 \setbeamercolor{palette tertiary}{bg=dnpblue,fg=white}
 
-% read custom variables
+% read variable data
 \input{Commands.tex}
 \input{PointsOfInterest.tex}
+\input{AdressStatistik.tex}
 
 
 \begin{document}
@@ -94,7 +109,7 @@
 \setbeamertemplate{footline}{}
 \begin{frame}
 	\begin{tikzpicture}[overlay, remember picture, shift={(current page.south west)}]
-		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Bilder/adresscheck.png}};
+		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Karten/titelbild.pdf}};
 		\fill[dnplightblue,path fading=dnpfading] (0, 0) rectangle (\paperwidth, \paperheight);
 		\fill[dnpblue] (0, 0) rectangle  (4.7, \paperheight);
 		\node[white,anchor=west] at (.2, 7) {\textbf{Ergebnisse}};
@@ -130,24 +145,12 @@
 	\end{bulletlist}
 \end{frame}
 
-\begin{mapframe}{Ergebnis Adresscheck -- Übersicht}{../Bilder/adresscheck.png}{.5\linewidth}
+\begin{mapframe}{Ergebnis Adresscheck -- Übersicht}{../Karten/adresscheck.pdf}{.5\linewidth}
 	\centering
-	\resizebox{\textwidth}{!}{
-		\begin{tblr}{colspec={l@{}l|rrrr},row{1,2}={bg=dnpblue,fg=white,font=\bfseries},row{3,5}={bg=dnplightblue,fg=black},row{6}={font=\bfseries}}
-			& Adresskulisse &&&& \\
-			&& Adressen & Einheiten GF+ & Einheiten DNP & Differenz \\
-			\colordot{addressgreen} & Adresse ohne Lage-Korrektur & \adressen[3,2] & \adressen[3,3] & \adressen[3,4] & \adressen[3,5] \\
-			\colordot{addressorange} & Adresse verschoben 		  & \adressen[4,2] & \adressen[4,3] & \adressen[4,4] & \adressen[4,5] \\
-			\colordot{addressblue} & Adresse hinzugefügt 		  & \adressen[5,2] & \adressen[5,3] & \adressen[5,4] & \adressen[5,5] \\ \hline[black,wd=1pt]
-			& Gesamt & \adressen[6,2] & \adressen[6,3] & \adressen[6,4] & \adressen[6,5] \\
-			&&&&& \\
-			\colordot{addressblack} & Adresse optimiert & \adressen[9,2] &&& \\
-			\colordot{addresspink} & Adresse nicht vorhanden & \adressen[10,2] &&&
-		\end{tblr}
-	}
+	\resizebox{\textwidth}{!}{\adressStatistik}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Adresscheck -- Analysebeispiel}{../Bilder/adresscheck.png}{.55\textwidth}
+\begin{mapframe}{Ergebnis Adresscheck -- Analysebeispiel}{../Karten/adresscheck.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
 		\node[inner sep=0] (adresseAnalysebeispiel) at (0,0) {\includegraphics[width=5.7cm]{../Bilder/analysebeispiel-adressen.png}};
@@ -156,35 +159,23 @@
 	\vspace{.2cm}
 	\resizebox{5.81cm}{!}{
 	\begin{tblr}[expand=\einheitenAnalysebeispiel]{colspec={llll},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{2}={bg=dnplightblue,fg=black}}
-		& Grunddaten GF+ & Adresscheck DNP & Differenz \\
+		& Grunddaten \Kunde & Adresscheck DNP & Differenz \\
 		Anzahl Einheiten & \einheitenAnalysebeispiel
 	\end{tblr}
 	}
-	\tikz[remember picture,overlay]{
-		\coordinate (top1) at ($(map2.north west)!\pointofinterestoneX!(map2.north east)$);
-		\coordinate (bottom1) at ($(map2.south west)!\pointofinterestoneX!(map2.south east)$);
-		\coordinate (target1) at ($(top1)!\pointofinterestoneY!(bottom1)$);
-		\fill[gray,opacity=.3] (target1) -- (adresseAnalysebeispiel.north west) -- (adresseAnalysebeispiel.south west) -- cycle;
-		\node[scale=.7,text=white,inner sep=1pt,fill=dnpblue,circle] at (target1) {1};
-	}
+	\zoomtriangle{1}{adresseAnalysebeispiel}{\pointofinterestoneX}{\pointofinterestoneY}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Adresscheck -- Besonderheit}{../Bilder/adresscheck.png}{.55\textwidth}
+\begin{mapframe}{Ergebnis Adresscheck -- Besonderheit}{../Karten/adresscheck.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
 		\node[inner sep=0] (adresseBesonderheit) at (0,0) {\includegraphics[width=5.7cm]{../Bilder/besonderheit-adressen.png}};
 	} \\
 	\tiny \besonderheitAdressen
-	\tikz[remember picture,overlay]{
-		\coordinate (top2) at ($(map3.north west)!\pointofinteresttwoX!(map3.north east)$);
-		\coordinate (bottom2) at ($(map3.south west)!\pointofinteresttwoX!(map3.south east)$);
-		\coordinate (target2) at ($(top2)!\pointofinteresttwoY!(bottom2)$);
-		\fill[gray,opacity=.3] (target2) -- (adresseBesonderheit.north west) -- (adresseBesonderheit.south west) -- cycle;
-		\node[scale=.7,text=white,inner sep=1pt,fill=dnpblue,circle] at (target2) {2};
-	}
+	\zoomtriangle{2}{adresseBesonderheit}{\pointofinteresttwoX}{\pointofinteresttwoY}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Adresscheck -- Aufschlüsselung nach Anzahl Einheiten}{../Bilder/hp-verteilung.png}{.55\textwidth}
+\begin{mapframe}{Ergebnis Adresscheck -- Aufschlüsselung nach Anzahl Einheiten}{../Karten/hp-verteilung.pdf}{.55\textwidth}
 	\begin{bulletlist}{3pt}
 		\item[\colordot{addressgreen}] Ein- und Zweifamilienhäuser
 		\item[\colordot{addressorange}] Mehrfamilienhäuser
@@ -192,7 +183,7 @@
 	\end{bulletlist}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Übersicht}{../Bilder/trenches.png}{.5\linewidth}
+\begin{mapframe}{Ergebnis Trenches -- Übersicht}{../Karten/trenches.pdf}{.5\linewidth}
 	\centering
 	\resizebox{\textwidth}{!}{
 		\begin{tblr}{
@@ -218,81 +209,57 @@
 	}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Analysebeispiel}{../Bilder/trenches.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- Analysebeispiel}{../Karten/trenches.pdf}{.6\textwidth}
 	\centering
 	\tikz[remember picture]{
 		\node[inner sep=0] (trenchesAnalysebeispiel) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/analysebeispiel-trenches.png}};
 	} \\
 	\tiny Konkrete Baumeter auf Basis der Adresskulisse
-	\tikz[remember picture,overlay]{
-		\coordinate (top3) at ($(map6.north west)!\pointofinterestthreeX!(map6.north east)$);
-		\coordinate (bottom3) at ($(map6.south west)!\pointofinterestthreeX!(map6.south east)$);
-		\coordinate (target3) at ($(top3)!\pointofinterestthreeY!(bottom3)$);
-		\fill[gray,opacity=.3] (target3) -- (trenchesAnalysebeispiel.north west) -- (trenchesAnalysebeispiel.south west) -- cycle;
-		\node[scale=.7,text=white,inner sep=1pt,fill=dnpblue,circle] at (target3) {3};
-	}
+	\zoomtriangle{3}{trenchesAnalysebeispiel}{\pointofinterestthreeX}{\pointofinterestthreeY}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- typische Oberfläche}{../Bilder/trenches.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- typische Oberfläche}{../Karten/trenches.pdf}{.6\textwidth}
 	\centering
 	\tikz[remember picture]{
 		\node[inner sep=0] (trenchesTypisch) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/typische-oberflaeche.png}};
 	} \\
 	\tiny \typischeOberflaeche
-	\tikz[remember picture,overlay]{
-		\coordinate (top4) at ($(map7.north west)!\pointofinterestfourX!(map7.north east)$);
-		\coordinate (bottom4) at ($(map7.south west)!\pointofinterestfourX!(map7.south east)$);
-		\coordinate (target4) at ($(top4)!\pointofinterestfourY!(bottom4)$);
-		\fill[gray,opacity=.3] (target4) -- (trenchesTypisch.north west) -- (trenchesTypisch.south west) -- cycle;
-		\node[scale=.7,text=white,inner sep=1pt,fill=dnpblue,circle] at (target4) {4};
-	}
+	\zoomtriangle{4}{trenchesTypisch}{\pointofinterestfourX}{\pointofinterestfourY}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Besonderheit}{../Bilder/trenches.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- Besonderheit}{../Karten/trenches.pdf}{.6\textwidth}
 	\centering
 	\tikz[remember picture]{
 		\node[inner sep=0] (trenchesBesonderheit) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/besonderheit-trenches.png}};
 	} \\
 	\tiny \besonderheitTrenches
-	\tikz[remember picture,overlay]{
-		\coordinate (top5) at ($(map8.north west)!\pointofinterestfiveX!(map8.north east)$);
-		\coordinate (bottom5) at ($(map8.south west)!\pointofinterestfiveX!(map8.south east)$);
-		\coordinate (target5) at ($(top5)!\pointofinterestfiveY!(bottom5)$);
-		\fill[gray,opacity=.3] (target5) -- (trenchesBesonderheit.north west) -- (trenchesBesonderheit.south west) -- cycle;
-		\node[scale=.7,text=white,inner sep=1pt,fill=dnpblue,circle] at (target5) {5};
-	}
+	\zoomtriangle{5}{trenchesBesonderheit}{\pointofinterestfiveX}{\pointofinterestfiveY}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Sonderquerung}{../Bilder/trenches.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- Sonderquerung}{../Karten/trenches.pdf}{.6\textwidth}
 	\centering
 	\tikz[remember picture]{
 		\node[inner sep=0] (trenchesSonderquerung) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/sonderquerung.png}};
 	} \\
 	\tiny \sonderquerung
-	\tikz[remember picture,overlay]{
-		\coordinate (top6) at ($(map9.north west)!\pointofinterestsixX!(map9.north east)$);
-		\coordinate (bottom6) at ($(map9.south west)!\pointofinterestsixX!(map9.south east)$);
-		\coordinate (target6) at ($(top6)!\pointofinterestsixY!(bottom6)$);
-		\fill[gray,opacity=.3] (target6) -- (trenchesSonderquerung.north west) -- (trenchesSonderquerung.south west) -- cycle;
-		\node[scale=.7,text=white,inner sep=1pt,fill=dnpblue,circle] at (target6) {6};
-	}
+	\zoomtriangle{6}{trenchesSonderquerung}{\pointofinterestsixX}{\pointofinterestsixY}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Verteilung Handschachtung}{../Bilder/trenches-handschachtung.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- Verteilung Handschachtung}{../Karten/trenches-handschachtung.pdf}{.6\textwidth}
 	\begin{itemize}
 		\item[\colorrule{trenchgreen}] Trench \textbf{mit} Handschachtung
 		\item[\colorrule{trenchblack}] Trench \textbf{ohne} Handschachtung
 	\end{itemize}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Verteilung Trench im Straßenkörper}{../Bilder/trenches-strassenkoerper.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- Verteilung Trench im Straßenkörper}{../Karten/trenches-strassenkoerper.pdf}{.6\textwidth}
 	\begin{itemize}
 		\item[\colorrule{trenchred}] Trench im \textbf{Straßenkörper}
 		\item[\colorrule{trenchblack}] Trench im \textbf{Gehweg}
 	\end{itemize}
 \end{mapframe}
 
-\begin{mapframe}{Ergebnis Trenches -- Verteilung Trench auf Privatweg}{../Bilder/trenches-privatweg.png}{.6\textwidth}
+\begin{mapframe}{Ergebnis Trenches -- Verteilung Trench auf Privatweg}{../Karten/trenches-privatweg.pdf}{.6\textwidth}
 	\begin{itemize}
 		\item[\colorrule{trenchblue}] Trench auf \textbf{Privatweg}
 		\item[\colorrule{trenchblack}] Trench auf \textbf{öffentlichem Grund}
