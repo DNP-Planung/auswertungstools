@@ -3,6 +3,7 @@ from qgis.core import *
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtCore import QSize, Qt
 import os, shutil, math
+from . import xlsxwriter
 
 
 def classFactory(iface):
@@ -14,7 +15,7 @@ class GeneratePresentation:
         self.iface = iface
         self.image_width = 1150
         self.image_height = 800
-        self.zoom_factor = 5
+        self.zoom_factor = 4
         self.destination_directory = os.path.expanduser("~")
 
     def initGui(self):
@@ -174,25 +175,28 @@ class GeneratePresentation:
 
     def calculate_address_statistics(layer, destination):
         conditions = ['"Pruefung" = \'k\'', '"Pruefung" = \'d\'', '"Pruefung" = \'v\'', '"Pruefung" = \'h\'']
-        columns = ['"Total Kunde"', '"Total DNP"', '"Total DNP" - "Total Kunde"']
+        columns = ['1', '"Total Kunde"', '"Total DNP"', '"Total DNP" - "Total Kunde"']
         result = []
 
         for condition in conditions:
-            row = [GeneratePresentation.filtered_column_sum(layer, condition, '1')]
+            row = []
             for column in columns:
                 row.append(GeneratePresentation.filtered_column_sum(layer, condition, column))
             result.append(row)
         
         totalRow = []
-        for column in range(len(columns) + 1):
+        for column in range(len(columns)):
             totalRow.append(sum([row[column] for row in result]))
         result.append(totalRow)
+        
+        optimiert = GeneratePresentation.filtered_column_sum(layer, '"Pruefung" = \'o\'', '1')
+        nicht_vorhanden = GeneratePresentation.filtered_column_sum(layer, '"Pruefung" = \'n\'', '1')
 
         result_strings = [' & '.join([str(x) for x in row]) for row in result]
-        result_strings.append(str(GeneratePresentation.filtered_column_sum(layer, '"Pruefung" = \'o\'', '1')))
-        result_strings.append(str(GeneratePresentation.filtered_column_sum(layer, '"Pruefung" = \'n\'', '1')))
+        result_strings.append(str(optimiert))
+        result_strings.append(str(nicht_vorhanden))
 
-        with open(destination, "w") as f:
+        with open(os.path.join(destination, "Praesentation", "AdressStatistik.tex"), "w") as f:
             f.write('''\\newcommand\\adressStatistik{{
             \\begin{{tblr}}{{colspec={{l@{{}}l|rrrr}},row{{1,2}}={{bg=dnpblue,fg=white,font=\\bfseries}},row{{3,5,7}}={{bg=dnplightblue,fg=black}},row{{7}}={{font=\\bfseries}}}}
                 & Adresskulisse &&&& \\\\
@@ -207,6 +211,95 @@ class GeneratePresentation:
                 \\colordot{{addresspink}} & Adresse nicht vorhanden & {6} &&&
             \\end{{tblr}}
             }}'''.format(*result_strings))
+
+        # Create a workbook and add a worksheet.
+        workbook = xlsxwriter.Workbook(os.path.join(destination, "Adressauswertung.xlsx"))
+        worksheet = workbook.add_worksheet()
+
+        highlight = workbook.add_format()
+        highlight.set_bold()
+        highlight.set_bg_color('#001aae') # DNP blue
+        highlight.set_font_color('white')
+        highlight.set_align('right')
+
+        highlight_heading = workbook.add_format()
+        highlight_heading.set_bold()
+        highlight_heading.set_bg_color('#001aae') # DNP blue
+        highlight_heading.set_font_color('white')
+        highlight_heading.set_font_size(13)
+
+        bg_white = workbook.add_format()
+        bg_white.set_bg_color('white')
+
+        bg_gray = workbook.add_format()
+        bg_gray.set_bg_color('#dde2ff')
+
+        border_top = workbook.add_format()
+        border_top.set_top()
+        border_top.set_bg_color('#dde2ff')
+
+        border_top_right = workbook.add_format()
+        border_top_right.set_top()
+        border_top_right.set_right()
+        border_top_right.set_bg_color('#dde2ff')
+        border_top_right.set_bold()
+
+        border_right = workbook.add_format()
+        border_right.set_right()
+        border_right.set_bg_color('white')
+        border_right.set_bold()
+
+        border_right_gray = workbook.add_format()
+        border_right_gray.set_right()
+        border_right_gray.set_bg_color('#dde2ff')
+        border_right_gray.set_bold()
+
+        # set column width
+        worksheet.set_column(0, 0, 25)
+        worksheet.set_column(1, 4, 15)
+
+        for i in range(0, 100):
+            for j in range(0, 20):
+                worksheet.write(i, j, "", bg_white)
+
+        for i in range(0, 2):
+            for j in range(0, 5):
+                worksheet.write(i, j, "", highlight)
+
+        worksheet.write(0, 0, "Adresskulisse", highlight_heading)
+        worksheet.write(1, 1, "Adressen", highlight)
+        worksheet.write(1, 2, "Einheiten Kunde", highlight)
+        worksheet.write(1, 3, "Einheiten DNP", highlight)
+        worksheet.write(1, 4, "Differenz", highlight)
+        worksheet.write(2, 0, "Adresse ohne Lage-Korrektur", border_right_gray)
+        worksheet.write(3, 0, "Adressdaten angepasst", border_right)
+        worksheet.write(4, 0, "Adresse verschoben", border_right_gray)
+        worksheet.write(5, 0, "Adresse hinzugefügt", border_right)
+        worksheet.write(6, 0, "Gesamt", border_top_right)
+        worksheet.write(7, 0, "", border_right)
+        worksheet.write(8, 0, "", border_right)
+        worksheet.write(9, 0, "Adresse optimiert", border_right_gray)
+        worksheet.write(10, 0, "Adresse nicht vorhanden", border_right)
+
+        worksheet.write_row(2, 1, result[0], bg_gray)
+        worksheet.write_row(3, 1, result[1], bg_white)
+        worksheet.write_row(4, 1, result[2], bg_gray)
+        worksheet.write_row(5, 1, result[3], bg_white)
+
+        worksheet.write(2, 4, "=D3-C3", bg_gray)
+        worksheet.write(3, 4, "=D4-C4", bg_white)
+        worksheet.write(4, 4, "=D5-C5", bg_gray)
+        worksheet.write(5, 4, "=D6-C6", bg_white)
+
+        worksheet.write(6, 1, "=SUM(B3:B6)", border_top)
+        worksheet.write(6, 2, "=SUM(C3:C6)", border_top)
+        worksheet.write(6, 3, "=SUM(D3:D6)", border_top)
+        worksheet.write(6, 4, "=SUM(E3:E6)", border_top)
+
+        worksheet.write(9, 1, optimiert, bg_gray)
+        worksheet.write(10, 1, nicht_vorhanden, bg_white)
+
+        workbook.close()
 
     def filtered_length_sum(layer, condition):
         return math.ceil(sum(QgsVectorLayerUtils.getValues(layer, f'CASE WHEN {condition} THEN $length ELSE 0 END')[0]))
@@ -238,9 +331,8 @@ class GeneratePresentation:
         result_strings.append(f'{geschlossener_tiefbau[0]}~m &&& {geschlossener_tiefbau[1]}~m')
         result_strings.append(f'{rohrpressung}~m &&& {rohrpressung_privat}~m')
         result_strings.append(f'{spuelbohrung}~m &&& {spuelbohrung_privat}~m')
-        print(result)
 
-        with open(destination, "w") as f:
+        with open(os.path.join(destination, "Praesentation", "TrenchStatistik.tex"), "w") as f:
             f.write('''\\newcommand\\trenchStatistik{{
             \\begin{{tblr}}{{
                 colspec={{l@{{}}lrrrr}},
@@ -261,88 +353,12 @@ class GeneratePresentation:
             \\end{{tblr}}
             }}'''.format(*result_strings))
 
-    def instantiate_template(self):
-        fotopunkt = GeneratePresentation.find_layer('Fotopunkt')
-        trenches = GeneratePresentation.find_layer('Trenches')
-        addresses = GeneratePresentation.find_layer('Adressen')
-        polygons = GeneratePresentation.find_layer('Polygone')
-        osm = GeneratePresentation.find_layer('OpenStreetMap')
+        # Create a workbook and add a worksheet.
+        workbook = xlsxwriter.Workbook(os.path.join(destination, "Trenches.xlsx"))
+        worksheet = workbook.add_worksheet()
+        worksheet.write(0, 0, 'TODO')
+        workbook.close()
 
-        destination = QFileDialog.getExistingDirectory(None, 'Select Destination')
-        if not destination:
-            return
-        self.destination_directory = destination
-        images_dir = os.path.join(destination, "Karten")
-
-        self.init_progress_bar(11)
-        self.copy_template(destination)
-        self.increment_progess()
-
-        address_statistics_path = os.path.join(destination, "Praesentation", "AdressStatistik.tex")
-        GeneratePresentation.calculate_address_statistics(addresses, address_statistics_path)
-        self.increment_progess()
-
-        trench_statistics_path = os.path.join(destination, "Praesentation", "TrenchStatistik.tex")
-        GeneratePresentation.calculate_trench_lengths(trenches, trench_statistics_path)
-        self.increment_progess()
-
-        poi_file = os.path.join(destination, "Praesentation", "PointsOfInterest.tex")
-        extent = self.calculate_extent()
-        GeneratePresentation.write_poi_file(fotopunkt.getFeatures(), extent, poi_file)
-        self.increment_progess()
-
-        titlepic_path = os.path.join(images_dir, "titelbild.pdf")
-        self.make_pic_pdf([fotopunkt, addresses, polygons, osm], titlepic_path)
-        self.increment_progess()
-
-        address_check_path = os.path.join(images_dir, "adresscheck.pdf")
-        self.make_pic_pdf([addresses, polygons, osm], address_check_path)
-        self.increment_progess()
-
-        hp_distribution_path = os.path.join(images_dir, "hp-verteilung.pdf")
-        hp_distribution = GeneratePresentation.style_layer(addresses, [
-            ('"Total DNP" > 12', QColor(72, 123, 182), QColor(60, 100, 160), 0.3),
-            ('"Total DNP" > 2 and "Total DNP" <= 12', QColor(228, 187, 114), QColor(190, 160, 90), 0.3),
-            ('"Total DNP" <= 2', QColor(84, 174, 74), QColor(70, 150, 60), 0.3)
-        ])
-        self.make_pic_pdf([hp_distribution, polygons, osm], hp_distribution_path)
-        self.increment_progess()
-
-        trenches_path = os.path.join(images_dir, "trenches.pdf")
-        self.make_pic_pdf([trenches, polygons, osm], trenches_path)
-        self.increment_progess()
-
-        by_hands_path = os.path.join(images_dir, "trenches-handschachtung.pdf")
-        by_hands = GeneratePresentation.style_layer(trenches, [
-            ('"Handschachtung" = false', QColor('black'), None, None),
-            ('"Handschachtung" = true', QColor('#54b04a'), None, 0.5)
-        ])
-        self.make_pic_pdf([by_hands, polygons, osm], by_hands_path)
-        self.increment_progess()
-
-        by_streets_path = os.path.join(images_dir, "trenches-strassenkoerper.pdf")
-        by_streets = GeneratePresentation.style_layer(trenches, [
-            ('"In_Strasse" = false', QColor('black'), None, None),
-            ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.5)
-        ])
-        self.make_pic_pdf([by_streets, polygons, osm], by_streets_path)
-        self.increment_progess()
-
-        by_private_path = os.path.join(images_dir, "trenches-privatweg.pdf")
-        by_private = GeneratePresentation.style_layer(trenches, [
-            ('"Privatweg" = false', QColor('black'), None, None),
-            ('"Privatweg" = true', QColor('#487bb6'), None, 0.5)
-        ])
-        self.make_pic_pdf([by_private, polygons, osm], by_private_path)
-        self.increment_progess()
-
-        self.iface.messageBar().clearWidgets()
-        self.iface.messageBar().pushMessage(
-            "Success",
-            "Presentation prepared in <a href=\"file:///" + destination + "\">" + destination + "</a>.",
-            level=Qgis.MessageLevel.Success,
-            duration=15
-        )
 
     def attempt_instantiate_template(self):
         try:
@@ -408,12 +424,10 @@ class GeneratePresentation:
         self.copy_template(destination)
         self.increment_progess()
 
-        address_statistics_path = os.path.join(destination, "Praesentation", "AdressStatistik.tex")
-        GeneratePresentation.calculate_address_statistics(addresses, address_statistics_path)
+        GeneratePresentation.calculate_address_statistics(addresses, destination)
         self.increment_progess()
 
-        trenches_statistics_path = os.path.join(destination, "Praesentation", "TrenchStatistik.tex")
-        GeneratePresentation.calculate_trench_lengths(trenches, trenches_statistics_path)
+        GeneratePresentation.calculate_trench_lengths(trenches, destination)
         self.increment_progess()
 
         poi_file = os.path.join(destination, "Praesentation", "PointsOfInterest.tex")
@@ -444,24 +458,24 @@ class GeneratePresentation:
 
         by_hands_path = os.path.join(images_dir, "trenches-handschachtung.pdf")
         by_hands = GeneratePresentation.style_layer(trenches, [
-            ('"Handschachtung" = false', QColor('black'), None, None),
-            ('"Handschachtung" = true', QColor('#54b04a'), None, 0.5)
+            ('"Handschachtung" = false', QColor('black'), None, 0.3),
+            ('"Handschachtung" = true', QColor('#54b04a'), None, 0.7)
         ])
         self.make_pic_pdf([by_hands, polygons, osm], by_hands_path)
         self.increment_progess()
 
         by_streets_path = os.path.join(images_dir, "trenches-strassenkoerper.pdf")
         by_streets = GeneratePresentation.style_layer(trenches, [
-            ('"In_Strasse" = false', QColor('black'), None, None),
-            ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.5)
+            ('"In_Strasse" = false', QColor('black'), None, 0.3),
+            ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.7)
         ])
         self.make_pic_pdf([by_streets, polygons, osm], by_streets_path)
         self.increment_progess()
 
         by_private_path = os.path.join(images_dir, "trenches-privatweg.pdf")
         by_private = GeneratePresentation.style_layer(trenches, [
-            ('"Privatweg" = false', QColor('black'), None, None),
-            ('"Privatweg" = true', QColor('#487bb6'), None, 0.5)
+            ('"Privatweg" = false', QColor('black'), None, 0.3),
+            ('"Privatweg" = true', QColor('#487bb6'), None, 0.7)
         ])
         self.make_pic_pdf([by_private, polygons, osm], by_private_path)
         self.increment_progess()
