@@ -23,7 +23,27 @@
 \definecolor{trenchpurple}{HTML}{873bde}
 \definecolor{trenchspuelbohrung}{HTML}{01ffe1}
 \definecolor{trenchblack}{HTML}{000000}
-\colorlet{beamer@blendedblue}{dnpblue}
+\usecolortheme[named=dnpblue]{structure}
+
+% No navigation symbols ("next slide"/"previous slide")
+\setbeamertemplate{navigation symbols}{}
+
+% make the footline DNP blue
+\setbeamercolor{palette primary}{bg=dnpblue,fg=white}
+\setbeamercolor{palette secondary}{bg=dnpblue,fg=white}
+\setbeamercolor{palette tertiary}{bg=dnpblue,fg=white}
+
+% define associative array functionality, e.g.
+%   \storedata\mydata{{one}{two}{three}}
+%   \getdata[2]\mydata   % returns two
+\newcount\tmpnum
+\def\storedata#1#2{\tmpnum=0 \edef\tmp{\string#1}\storedataA#2\end}
+\def\storedataA#1{\advance\tmpnum by1
+	\ifx\end#1\else
+	\expandafter\def\csname data:\tmp:\the\tmpnum\endcsname{#1}%
+	\expandafter\storedataA\fi
+}
+\def\getdata[#1]#2{\csname data:\string#2:#1\endcsname}
 
 % define the fading used on the title slide
 \usepackage{tikz}
@@ -31,15 +51,15 @@
 \tikzfading[name=dnpfading,top color=transparent!100,bottom color=transparent!0]
 
 \tikzset{fotopunkt/.style={scale=.7,inner sep=1pt,text=white,draw=white,fill=dnpblue,circle}}
+
 % draw the zoom triangle between a point of interest and its photo
-%  * label of the point (#1)
+%  * number of the point (#1)
 %  * photo (as a TikZ node) (#2)
-%  * x, y coordinates of the point within the current map (#3, #4)
-\newcommand\zoomtriangle[4]{
+\newcommand\zoomtriangle[2]{
 	\tikz[remember picture,overlay]{
-		\coordinate (top) at ($(map.north west)!#3!(map.north east)$);
-		\coordinate (bottom) at ($(map.south west)!#3!(map.south east)$);
-		\coordinate (target) at ($(top)!#4!(bottom)$);
+		\coordinate (top) at ($(map.north west)!\getdata[#1]\xcoords!(map.north east)$);
+		\coordinate (bottom) at ($(map.south west)!\getdata[#1]\xcoords!(map.south east)$);
+		\coordinate (target) at ($(top)!\getdata[#1]\ycoords!(bottom)$);
 		\fill[gray,opacity=.35] (target) -- (#2.north west) -- (#2.south west) -- cycle;
 		\node[fotopunkt] at (target) {#1};
 	}
@@ -62,14 +82,14 @@
 %  * a right column containing the content of the environment
 % example:
 % \begin{mapframe}{Frame title}{/path/to/map.png}{.5\textwidth}
-%     (content of the right column)
-% \end{mapframe}
+	%     (content of the right column)
+	% \end{mapframe}
 \usepackage{environ,calc}
 \NewEnviron{mapframe}[3]{\begin{frame}{#1}
-	\begin{minipage}{#3}
-		\tikz[remember picture]{\node[inner sep=0] (map) at (0, 0) {\includegraphics[width=\linewidth]{#2}};}
-	\end{minipage}\hfill%
-	\begin{minipage}{\dimexpr0.99\linewidth-#3}\BODY\end{minipage}
+		\begin{minipage}{#3}
+			\tikz[remember picture]{\node[inner sep=0] (map) at (0, 0) {\includegraphics[width=\linewidth]{#2}};}
+		\end{minipage}\hfill%
+		\begin{minipage}{\dimexpr0.99\linewidth-#3}\BODY\end{minipage}
 \end{frame}}
 
 % logo in the bottom right corner
@@ -77,17 +97,25 @@
 \newcommand{\nologo}{\setbeamertemplate{logo}{}} % command to set the logo to nothing
 
 % info shown in the footline
-\author{Deutsche Netzplanung}
-\title{Ergebnisse \Ort}
+\author[DNP]{Deutsche Netzplanung}
+\title[Ergebnisse \Ort]{\textbf{Ergebnisse} \\ \Ort}
+\subtitle{Adresscheck und Trenches auf Basis von Bildmaterialien}
 \date{\Abgabedatum}
 
-% No navigation symbols ("next slide"/"previous slide")
-\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{date}{}
 
-% make the footline DNP blue
-\setbeamercolor{palette primary}{bg=dnpblue,fg=white}
-\setbeamercolor{palette secondary}{bg=dnpblue,fg=white}
-\setbeamercolor{palette tertiary}{bg=dnpblue,fg=white}
+\setbeamertemplate{title page}{
+	\begin{tikzpicture}[overlay, remember picture, shift={(current page.south west)}]
+		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Karten/titelbild.pdf}};
+		\fill[dnplightblue,path fading=dnpfading] (0, 0) rectangle (\paperwidth, \paperheight);
+		\fill[dnpblue] (0, 0) rectangle  (5.3, \paperheight);
+		\node[white,anchor=west,text width=4.9cm] at (.2, 7) {\inserttitle{}};
+		\node[white,anchor=west,text width=4.9cm] at (.2, 5) {\scriptsize \insertsubtitle{}};
+		\node[white,anchor=south west] at (.2, .2) {\tiny \insertdate{}};
+		\node[anchor=south east] at (\paperwidth, .1) {\insertlogo{}};
+	\end{tikzpicture}
+	\addtocounter{framenumber}{-1} % exclude titlepage from page numbering
+}
 
 % read variable data
 \input{Commands.tex}
@@ -100,21 +128,8 @@
 	
 {
 \setbeamertemplate{footline}{}
-\begin{frame}
-	\begin{tikzpicture}[overlay, remember picture, shift={(current page.south west)}]
-		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Karten/titelbild.pdf}};
-		\fill[dnplightblue,path fading=dnpfading] (0, 0) rectangle (\paperwidth, \paperheight);
-		\fill[dnpblue] (0, 0) rectangle  (4.7, \paperheight);
-		\node[white,anchor=west] at (.2, 7) {\textbf{Ergebnisse}};
-		\node[white,anchor=west] at (.2, 6.6) {\Ort};
-		\node[white,anchor=west,text width=4.3cm] at (.2, 5) {\scriptsize Adresscheck und Trenches auf Basis von Bildmaterialien};
-		\node[white,anchor=south west] at (.2, .2) {\tiny \Abgabedatum};
-		\node[anchor=south east] at (\paperwidth, .1) {\includegraphics[width=.1\textwidth]{../Bilder/Logo.png}};
-	\end{tikzpicture}
-\end{frame}
+\maketitle
 }
-
-\addtocounter{framenumber}{-1} %exclude titlepage from page numbering
 
 \begin{frame}{Struktur und Inhalt der Lieferung \Ort}
 	\begin{bulletlist}{5pt}
@@ -156,7 +171,7 @@
 		Anzahl Einheiten & \einheitenAnalysebeispiel
 	\end{tblr}
 	}
-	\zoomtriangle{1}{adresseAnalysebeispiel}{\pointofinterestoneX}{\pointofinterestoneY}
+	\zoomtriangle{1}{adresseAnalysebeispiel}
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Adresscheck -- Besonderheit}{../Karten/adresscheck.pdf}{.55\textwidth}
@@ -165,7 +180,7 @@
 		\node[inner sep=0] (adresseBesonderheit) at (0,0) {\includegraphics[width=5.7cm]{../Bilder/besonderheit-adressen.png}};
 	} \\
 	\tiny \besonderheitAdressen
-	\zoomtriangle{2}{adresseBesonderheit}{\pointofinteresttwoX}{\pointofinteresttwoY}
+	\zoomtriangle{2}{adresseBesonderheit}
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Adresscheck -- Aufschlüsselung nach Anzahl Einheiten}{../Karten/hp-verteilung.pdf}{.55\textwidth}
@@ -182,7 +197,6 @@
 		\trenchStatistik
 	} \\\vspace{.5cm}
 	\hfill\begin{minipage}{.98\textwidth} \tiny
-	\textbf{Sonderquerungen}: \sonderquerungen
 	\end{minipage}\hfill
 \end{mapframe}
 
@@ -192,7 +206,7 @@
 		\node[inner sep=0] (trenchesAnalysebeispiel) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/analysebeispiel-trenches.png}};
 	} \\
 	\tiny Konkrete Baumeter auf Basis der Adresskulisse
-	\zoomtriangle{3}{trenchesAnalysebeispiel}{\pointofinterestthreeX}{\pointofinterestthreeY}
+	\zoomtriangle{3}{trenchesAnalysebeispiel}
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Trenches -- typische Oberfläche}{../Karten/trenches.pdf}{.6\textwidth}
@@ -201,7 +215,7 @@
 		\node[inner sep=0] (trenchesTypisch) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/typische-oberflaeche.png}};
 	} \\
 	\tiny \typischeOberflaeche
-	\zoomtriangle{4}{trenchesTypisch}{\pointofinterestfourX}{\pointofinterestfourY}
+	\zoomtriangle{4}{trenchesTypisch}
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Trenches -- Besonderheit}{../Karten/trenches.pdf}{.6\textwidth}
@@ -210,7 +224,7 @@
 		\node[inner sep=0] (trenchesBesonderheit) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/besonderheit-trenches.png}};
 	} \\
 	\tiny \besonderheitTrenches
-	\zoomtriangle{5}{trenchesBesonderheit}{\pointofinterestfiveX}{\pointofinterestfiveY}
+	\zoomtriangle{5}{trenchesBesonderheit}
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Trenches -- Sonderquerung}{../Karten/trenches.pdf}{.6\textwidth}
@@ -219,7 +233,7 @@
 		\node[inner sep=0] (trenchesSonderquerung) at (0,0) {\includegraphics[width=\linewidth]{../Bilder/sonderquerung.png}};
 	} \\
 	\tiny \sonderquerung
-	\zoomtriangle{6}{trenchesSonderquerung}{\pointofinterestsixX}{\pointofinterestsixY}
+	\zoomtriangle{6}{trenchesSonderquerung}
 \end{mapframe}
 
 \begin{mapframe}{Ergebnis Trenches -- Verteilung Handschachtung}{../Karten/trenches-handschachtung.pdf}{.6\textwidth}
