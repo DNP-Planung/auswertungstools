@@ -1,0 +1,178 @@
+\documentclass[11pt, dvipsnames,aspectratio=169]{beamer}
+\usetheme{Madrid}
+
+\input{preamble.tex}
+\input{Commands.tex}
+\input{PointsOfInterest.tex}
+\input{OberflaechenStatistik.tex}
+
+\usepackage{eurosym}
+\usepackage{adjustbox}
+
+% square indicating classified surface
+\newcommand\colorsquare[1]{\tikz{\draw[draw=black,fill=surface#1] (0, 0) rectangle (.23,.23);}}
+
+% info shown in the footline
+\author[DNP]{Deutsche Netzplanung}
+\title[Ergebnisse \Ort]{\textbf{Ergebnisse} \\ \Ort}
+\subtitle{Oberflächenanalyse}
+\date{\Abgabedatum}
+
+
+\begin{document}
+	
+{
+	\setbeamertemplate{footline}{}
+	\maketitle
+}
+
+\begin{frame}{Struktur und Inhalt der Lieferung \Ort}
+	\begin{bulletlist}{5pt}
+		\item Kartenüberblick inklusive von uns gezeichneter Polygone
+			\begin{bulletlist}{3pt}
+				\item[$\bullet$] Polygone auf Basis der von \Kunde{} gelieferten Shape-Dateien
+				\item[$\bullet$] Straßen und Bürgersteige vollständig eingezeichnet und klassifiziert
+				\item[$\bullet$] Eingezeichnete Flächen vollständig ausgewertet
+			\end{bulletlist}
+		\item Bilder aus der Kommune
+		\begin{bulletlist}{3pt}
+			\item[$\bullet$] Typische Bilder aus der Kernstadt
+			\item[$\bullet$] Typische Bilder aus den Wohnbereichen
+			\item[$\bullet$] Besondere Situation vor Ort
+		\end{bulletlist}
+		\item Grunddaten für Kostenanalyse
+		\begin{bulletlist}{3pt}
+			\item[$\bullet$] Länge der Straßenseiten: Gesamt und pro Polygon
+			\item[$\bullet$] Anzahl Adressen und Haushalte
+			\item[$\bullet$] Oberflächen-Aufteilung innerhalb der Polygone
+			\item[$\bullet$] Anzahl und Art der Sonderquerungen
+		\end{bulletlist}
+	\end{bulletlist}
+\end{frame}
+
+\begin{mapframe}{Übersicht}{../Karten/karte.pdf}{.6\linewidth}
+	\scriptsize
+	\begin{itemize}
+		\surfacetypes
+
+		\item[\colorsquare{a}] Asphalt
+		\item[\colorsquare{t}] Pflaster
+		\item[\colorsquare{g}] Unbefestigt
+		\item[\colorsquare{v}] Verdichtet/Schotter
+		\item[\colorsquare{m}] Kopfsteinpflaster
+		\item[\colorsquare{n}] kein Bürgersteig
+		\item[\colorsquare{sa}] Asphaltierte Straße
+		\item[\colorsquare{st}] Gepflasterte Straße
+		\item[\colorsquare{sg}] Unbefestigte Straße
+		\item[\colorsquare{sm}] Straße mit Kopfsteinpflaster
+		\item[\colorsquare{sn}] keine öffentliche Straße
+		\item[\colorsquare{sx}] Sonderquerung Straße
+		\item[\colorsquare{x}] Sonderquerung
+	\end{itemize}
+\end{mapframe}
+
+\begin{mapframe}{Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
+	\centering
+	\tikz[remember picture]{
+		\node[inner sep=0] (bild1) at (0,0) {\includegraphics[width=4cm]{../Bilder/innenstadt-karte.png}};
+	} \\[.3cm]
+	\includegraphics[width=4cm]{../Bilder/innenstadt.png} \\
+	\scriptsize \bildeins
+	\zoomtriangle{1}{bild1}
+\end{mapframe}
+
+\begin{mapframe}{Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
+	\centering
+	\tikz[remember picture]{
+		\node[inner sep=0] (bild2) at (0,0) {\includegraphics[width=4cm]{../Bilder/wohnsiedlung-karte.png}};
+	} \\[.3cm]
+	\includegraphics[width=4cm]{../Bilder/wohnsiedlung.png} \\
+	\scriptsize \bildzwei
+	\zoomtriangle{2}{bild2}
+\end{mapframe}
+
+\begin{mapframe}{Besonderheit}{../Karten/karte.pdf}{.55\textwidth}
+	\centering
+	\tikz[remember picture]{
+		\node[inner sep=0] (bild3) at (0,0) {\includegraphics[width=4cm]{../Bilder/besonderheit-karte.png}};
+	} \\[.3cm]
+	\includegraphics[width=4cm]{../Bilder/besonderheit.png} \\
+	\scriptsize \bilddrei
+	\zoomtriangle{3}{bild3}
+\end{mapframe}
+
+\begin{frame}[t]{Grunddaten für Kostenanalyse}
+	\scriptsize
+
+	\adjustbox{valign=t}{\begin{minipage}{.47\textwidth}
+		\begin{tblr}{width=\textwidth,colspec={l@{}Xrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{8}={font=\bfseries}}
+			& Oberfläche Bürgersteige & Länge & Anteil \\
+			\colorsquare{g}\hspace{5pt} & Unbefestigt & 19845~m & 43~\% \\
+			\colorsquare{v} & Verdichtet & 19845~m & 43~\% \\
+			\colorsquare{t} & Pflaster & 19845~m & 43~\% \\
+			\colorsquare{a} & Asphalt & 19845~m & 43~\% \\
+			\colorsquare{m} & Kopfstein-/Mosaikpflaster & 19845~m & 43~\% \\
+			\colorsquare{n} & kein Bürgersteig & 19845~m & 43~\% \\
+			& Gesamt & 19845~m & 100~\% \\
+		\end{tblr}
+		\end{minipage}}\hfill%
+	\adjustbox{valign=t}{\begin{minipage}[t]{.52\textwidth}
+		\begin{tblr}{width=\textwidth,colspec={l@{}X[l]rrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{4}={font=\bfseries}}
+			& Sonderquerungen & Länge & Anteil & Anzahl \\
+			& Bach-, Flussquerung Bürgersteig & 62~m & 63~\% & 2 \\
+			& Bach-, Flussquerung Straße & 37~m & 37~\% & 1 \\
+			& Gesamt & 99~m & 100~\% & 3 \\
+		\end{tblr}
+	\end{minipage}}
+	
+	\adjustbox{valign=t}{\begin{minipage}[t]{.47\textwidth}
+		\begin{tblr}{width=\textwidth,colspec={l@{}Xrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{7}={font=\bfseries}}
+			& Oberfläche Straße & Länge & Anteil \\
+			\colorsquare{sg}\hspace{5pt} & Unbefestigte Straße & 23~m & 43~\% \\
+			\colorsquare{st} & Gepflasterte Straße & 12~m & 43~\% \\
+			\colorsquare{sa} & Asphaltierte Straße & 124~m & 43~\% \\
+			\colorsquare{sm} & Straße mit Kopfsteinpflaster & 234~m & 43~\% \\
+			& nicht BIS-geeignet & 2000~m & 43~\% \\
+			& Gesamt & 5000~m & 100~\% \\
+		\end{tblr}
+	\end{minipage}}\hfill%
+	\adjustbox{valign=t}{\begin{minipage}[t]{.52\textwidth}
+		\begin{tblr}{width=\textwidth,colspec={l@{}Xrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{4}={font=\bfseries}}
+			& Gesamtoberfläche & Länge & Anteil \\
+			& Bürgersteig & 19845~m & 43~\% \\
+			& Straße 	  & 19845~m & 43~\% \\
+			& Gesamt	  & 19845~m & 100~\% \\
+		\end{tblr}
+	\end{minipage}}
+\end{frame}
+
+\begin{frame}{Preise \Ort}
+	\begin{itemize}
+		\setlength{\itemsep}{5pt} 
+		\item Kommerzielles Modell
+		\begin{itemize}
+			\item[$\bullet$] Analysierte Straßenmeter mit einem Preis von $0.21~\text{\euro}$ pro Meter
+			\item[$\bullet$] Kosten für \Ort: 1000 m $\:\times$ $0.21~\frac{\text{\euro}}{m} = 210~\text{\euro}$
+			%\item[$\bullet$] Nicht rechnungsrelevant: $\Differenz$ m $\:\times$ $0\euro$ = $0\euro$
+			\begin{itemize}
+				\item[$\bullet$] \Ort{} - Ziertheim: $24.401$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m	
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m			
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+				%\item[$\bullet$] \Ort - Polygon: $yyy$m
+			\end{itemize}
+		\end{itemize}
+		\item Timing
+		\begin{itemize}
+			\item[$\bullet$] Abgabe am \Abgabedatum
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+
+
+\end{document}

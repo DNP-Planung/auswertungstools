@@ -1,0 +1,89 @@
+\usepackage[utf8]{inputenc}
+\usepackage{tabularray}	% for "tblr"
+\usepackage{graphicx}
+
+% Define the colors used by DNP for branding
+\usepackage{xcolor}
+\definecolor{dnpblue}{RGB}{0,26,174}
+\definecolor{dnplightblue}{RGB}{221,226,255}
+\usecolortheme[named=dnpblue]{structure}
+
+% No navigation symbols ("next slide"/"previous slide")
+\setbeamertemplate{navigation symbols}{}
+
+% make the footline DNP blue
+\setbeamercolor{palette primary}{bg=dnpblue,fg=white}
+\setbeamercolor{palette secondary}{bg=dnpblue,fg=white}
+\setbeamercolor{palette tertiary}{bg=dnpblue,fg=white}
+
+% define associative array functionality, e.g.
+%   \storedata\mydata{{one}{two}{three}}
+%   \getdata[2]\mydata   % returns two
+\newcount\tmpnum
+\def\storedata#1#2{\tmpnum=0 \edef\tmp{\string#1}\storedataA#2\end}
+\def\storedataA#1{\advance\tmpnum by1
+	\ifx\end#1\else
+	\expandafter\def\csname data:\tmp:\the\tmpnum\endcsname{#1}%
+	\expandafter\storedataA\fi
+}
+\def\getdata[#1]#2{\csname data:\string#2:#1\endcsname}
+
+% define the fading used on the title slide
+\usepackage{tikz}
+\usetikzlibrary{fadings,calc}
+\tikzfading[name=dnpfading,top color=transparent!100,bottom color=transparent!0]
+
+\tikzset{fotopunkt/.style={scale=.7,inner sep=1pt,text=white,draw=white,fill=dnpblue,circle}}
+
+% draw the zoom triangle between a point of interest and its photo
+%  * number of the point (#1)
+%  * photo (as a TikZ node) (#2)
+\newcommand\zoomtriangle[2]{
+	\tikz[remember picture,overlay]{
+		\coordinate (top) at ($(map.north west)!\getdata[#1]\xcoords!(map.north east)$);
+		\coordinate (bottom) at ($(map.south west)!\getdata[#1]\xcoords!(map.south east)$);
+		\coordinate (target) at ($(top)!\getdata[#1]\ycoords!(bottom)$);
+		\fill[gray,opacity=.35] (target) -- (#2.north west) -- (#2.south west) -- cycle;
+		\node[fotopunkt] at (target) {#1};
+	}
+}
+
+
+% bulletlist is an itemized list which has a blue bullet before each item
+\setbeamertemplate{itemize items}{$\bullet$}
+\newenvironment{bulletlist}[1]{\begin{itemize}\setlength{\itemsep}{#1}}{\end{itemize}}
+
+% define a new environment "mapframe" which consists of
+%  * a title (#1)
+%  * a left column featuring an image (#2) of width #3
+%  * a right column containing the content of the environment
+% example:
+% \begin{mapframe}{Frame title}{/path/to/map.png}{.5\textwidth}
+	%     (content of the right column)
+	% \end{mapframe}
+\usepackage{environ,calc}
+\NewEnviron{mapframe}[3]{\begin{frame}{#1}
+		\begin{minipage}{#3}
+			\tikz[remember picture]{\node[inner sep=0] (map) at (0, 0) {\includegraphics[width=\linewidth]{#2}};}
+		\end{minipage}\hfill%
+		\begin{minipage}{\dimexpr0.99\linewidth-#3}\BODY\end{minipage}
+\end{frame}}
+
+% logo in the bottom right corner
+\logo{\includegraphics[width=.1\textwidth]{../Bilder/Logo.png}}
+\newcommand{\nologo}{\setbeamertemplate{logo}{}} % command to set the logo to nothing
+
+\setbeamertemplate{date}{}
+
+\setbeamertemplate{title page}{
+	\begin{tikzpicture}[overlay, remember picture, shift={(current page.south west)}]
+		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Karten/titelbild.pdf}};
+		\fill[dnplightblue,path fading=dnpfading] (0, 0) rectangle (\paperwidth, \paperheight);
+		\fill[dnpblue] (0, 0) rectangle  (5.3, \paperheight);
+		\node[white,anchor=west,text width=4.9cm] at (.2, 7) {\inserttitle{}};
+		\node[white,anchor=west,text width=4.9cm] at (.2, 5) {\scriptsize \insertsubtitle{}};
+		\node[white,anchor=south west] at (.2, .2) {\tiny \insertdate{}};
+		\node[anchor=south east] at (\paperwidth, .1) {\insertlogo{}};
+	\end{tikzpicture}
+	\addtocounter{framenumber}{-1} % exclude titlepage from page numbering
+}

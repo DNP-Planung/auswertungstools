@@ -1,6 +1,6 @@
 [general]
-name=Generate Presentations
-description=
+name=DNP Auswertungen
+description=Tools für die Erstellung von Präsentationen zur Oberflächenanalyse und Adresscheck/Trenches
 about=
 version=0.1
 qgisMinimumVersion=3.0
