@@ -11,8 +11,138 @@ from collections import Counter
 def classFactory(iface):
     return GeneratePresentation(iface)
 
+def color_to_tikz(c):
+    return f'{{rgb,255:red,{c.red()};green,{c.green()};blue,{c.blue()}}}'
 
-class SymbologyCategory():
+class Table:
+    class Highlight(Enum):
+        NONE = 0
+        PRIMARY = 1
+        SECONDARY = 2
+
+    def __init__(self):
+        self.row_highlight_primary = []
+        self.row_highlight_secondary = []
+        self.rows = []
+        self.row_colors = {}
+
+    def numbers_to_unit(self, unit):
+        for row in self.rows:
+            for i in range(len(row)):
+                if isinstance(row[i], int) or isinstance(row[i], float):
+                    row[i] = (row[i], unit)
+
+    def set_row_color(self, i, c):
+        self.row_colors[i] = c
+
+    def add_row(self, row, highlight=0):
+        if highlight == Table.Highlight.PRIMARY:
+            self.row_highlight_primary.append(len(self.rows))
+        elif highlight == Table.Highlight.SECONDARY:
+            self.row_highlight_secondary.append(len(self.rows))
+        elif isinstance(highlight, QColor):
+            self.row_colors[len(self.rows)] = highlight
+        self.rows.append(row)
+    
+    def set_row(self, i, row):
+        self.rows[i] = row
+
+    def set_cell(self, i, j, value):
+        if i < len(self.rows) and j < len(self.rows[i]):
+            self.rows[i][j] = value
+    
+    def pad_and_add_units(row):
+        result = []
+        for x in row:
+            if isinstance(x, tuple):
+                number, unit = x
+                if unit == '%':
+                    unit = '\\%'
+                s = str(number) + '~' + unit
+            elif x is None:
+                s = ''
+            else:
+                s = str(x)
+            result.append(s)
+        return ' & '.join(result)
+
+    def to_latex(self, colspec, color_command):
+        primary = ','.join([str(i + 1) for i in self.row_highlight_primary])
+        secondary = ','.join([str(i + 1) for i in self.row_highlight_secondary])
+        result = '\\begin{tblr}{width=\\textwidth,colspec={' + colspec + '},row{'
+        result += primary + '}={bg=dnpblue,fg=white,font=\\bfseries},row{'
+        result += secondary + '}={font=\\bfseries,bg=dnplightblue,fg=black}}'
+
+        for (i, row) in enumerate(self.rows):
+            result += '\n    '
+            if i in self.row_colors:
+                color = self.row_colors[i]
+                result += f'\\{color_command}{{{color_to_tikz(color)}}} '
+            
+            result += ' & '
+            result += Table.pad_and_add_units(row)
+            result += ' \\\\'
+        
+        result += '\n\\end{tblr}'
+        
+        return result
+
+    def add_units(row):
+        result = []
+        for x in row:
+            if isinstance(x, tuple):
+                number, unit = x
+                result.append(number)
+                result.append(unit)
+            elif x is None:
+                result.append('')
+                result.append('')
+            else:
+                result.append(x)
+        return result
+
+    def to_xlsx(self, workbook, column_widths=[], worksheet=None, offset=0):
+        if not worksheet:
+            worksheet = workbook.add_worksheet()
+
+        # set column widths
+        for i, w in enumerate(column_widths):
+            worksheet.set_column(i, i, w)
+
+        primary = workbook.add_format()
+        primary.set_bold()
+        primary.set_bg_color('#001aae') # DNP blue
+        primary.set_font_color('white')
+
+        secondary = workbook.add_format()
+        secondary.set_bold()
+        secondary.set_bg_color('#dde2ff')
+
+        bg_white = workbook.add_format()
+        bg_white.set_bg_color('white')
+
+        for i in range(0, 100):
+            for j in range(0, 20):
+                worksheet.write(i + offset, j, '', bg_white)
+
+        for (i, row) in enumerate(self.rows):
+            fmt = bg_white
+            if i in self.row_highlight_secondary:
+                fmt = secondary
+            if i in self.row_highlight_primary:
+                fmt = primary
+            
+            if i in self.row_colors:
+                color_fmt = workbook.add_format()
+                color_fmt.set_bg_color(self.row_colors[i].name())
+                worksheet.write(i + offset, 0, '', color_fmt)
+            else:
+                worksheet.write(i + offset, 0, '', fmt)
+
+            worksheet.write_row(i + offset, 1, Table.add_units(row), fmt)
+
+
+class SymbologyCategory:
     def __init__(self, token, color, label, value):
         self.token = token
         self.color = color
@@ -23,7 +153,7 @@ class SymbologyCategory():
         result = []
         for c in layer.renderer().categories():
             token = c.value()
-            color = c.symbol().color().name()[1:]
+            color = c.symbol().color()
             label = c.label()
             match = re.search(r'\(.*\) (.*)', label)
             if match:
@@ -111,14 +241,13 @@ class GeneratePresentation:
         self.iface = iface
         self.image_width = 1150
         self.image_height = 800
-        self.zoom_factor = 4
         self.destination_directory = os.path.expanduser("~")
         self.dir_path = os.path.dirname(os.path.realpath(__file__))
 
     def initGui(self):
         presIcon = QIcon(os.path.join(self.dir_path, 'file-easel.png'))
-        cameraIcon = QIcon(os.path.join(self.dir_path, 'camera.png'))
-        rectIcon = QIcon(os.path.join(self.dir_path, 'square.png'))
+        cameraIcon = QIcon(os.path.join(self.dir_path, 'image.png'))
+        rectIcon = QIcon(os.path.join(self.dir_path, 'rectangle.png'))
 
         menu = QMenu()
 
@@ -140,7 +269,7 @@ class GeneratePresentation:
 
         toolButton = QToolButton()
         toolButton.setMenu(menu)
-        toolButton.setDefaultAction(QAction(presIcon, 'Präsentation erzeugen'))
+        toolButton.setDefaultAction(QAction(presIcon, 'Auswertungstools'))
         toolButton.setPopupMode(QToolButton.InstantPopup)
 
         self.tool_action = self.iface.addToolBarWidget(toolButton)
@@ -163,10 +292,10 @@ class GeneratePresentation:
         progressMessageBar.layout().addWidget(self.progress)
         message_bar.pushWidget(progressMessageBar, Qgis.Info)
 
-    def increment_progess(self):
+    def increment_progess(self, increment=1):
         if not self.progress:
             return
-        self.progress.setValue(self.progress.value() + 1)
+        self.progress.setValue(self.progress.value() + increment)
 
     def require_layer_gracious(key):
         layers = QgsProject.instance().mapLayers()
@@ -194,15 +323,6 @@ class GeneratePresentation:
     def copy_template(self, subfolder, destination):
         source = os.path.join(self.dir_path, "template", subfolder)
         shutil.copytree(source, destination, dirs_exist_ok=True)
-
-    def get_feature_coords(feature, extent):
-        geometry = feature.geometry()
-        if geometry.type() != QgsWkbTypes.PointGeometry:
-            return None
-        
-        x = (geometry.asPoint()[0] - extent.xMinimum()) / extent.width()
-        y = 1 - (geometry.asPoint()[1] - extent.yMinimum()) / extent.height()
-        return [x, y]
 
     def add_rule(root_rule, expression, color, stroke_color = None, width = None):
         rule = root_rule.children()[0].clone()
@@ -252,16 +372,17 @@ class GeneratePresentation:
     def attempt_make_pic_user(self, rect=None):
         try:
             self.make_pic_user(rect)
-        except RuntimeError as e:
+        except Exception as e:
+            self.iface.messageBar().clearWidgets()
             self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
 
-    def make_pic_pdf(self, layers, destination, extent=None):
+    def make_pic_pdf(self, layers, destination, extent=None, zoom_factor=4):
         project = QgsProject.instance()
         layout = QgsPrintLayout(project)
         layout.initializeDefaults()
 
-        width = self.image_width / self.zoom_factor
-        height = self.image_height / self.zoom_factor
+        width = self.image_width / zoom_factor
+        height = self.image_height / zoom_factor
         size = QgsLayoutSize(width, height)
         pc = layout.pageCollection()
         pc.pages()[0].setPageSize(size)
@@ -312,110 +433,52 @@ class GeneratePresentation:
     def filtered_length_sum(layer, condition):
         return math.ceil(GeneratePresentation.filtered_column_sum(layer, condition, '$length'))
 
-
     def calculate_address_statistics(layer, destination):
-        columns = ['1', '"Total Kunde"', '"Total DNP"', '"Total DNP" - "Total Kunde"']
+        columns = ['1', '"Total Kunde"', '"Total DNP"', '1']
         categories = SymbologyCategory.extract_symbology_categories(layer, 'Pruefung', columns)
 
         special_tokens = ['n', 'o']
         normal_categories = list(filter(lambda c: c.token not in special_tokens, categories))
         special_categories = list(filter(lambda c: c.token in special_tokens, categories))
+        
+        table = Table()
+        table.add_row([
+            'Adresskulisse', '', '', '', ''
+        ], Table.Highlight.PRIMARY)
+        table.add_row([
+            '', 'Adressen', 'Einheiten \\Kunde', 'Einheiten DNP', 'Differenz'
+        ], Table.Highlight.PRIMARY)
 
+        for c in normal_categories:
+            c.value[3] = c.value[2] - c.value[1]
+            table.add_row([c.label] + c.value, c.color)
+        
         totalResult = []
         for column in range(len(columns)):
             totalResult.append(sum([c.value[column] for c in normal_categories]))
+        table.add_row(['Gesamt'] + totalResult, Table.Highlight.SECONDARY)
+
+        # if present, write results for special categories
+        if len(special_categories) > 0:
+            table.add_row(['', '', '', '', ''])
+            for c in special_categories:
+                table.add_row([c.label, c.value[0], '', '', ''], c.color)
 
         with open(os.path.join(destination, "Praesentation", "AdressStatistik.tex"), "w") as f:
-            # define colors
-            for c in normal_categories + special_categories:
-                f.write('\\definecolor{{addresscolor{}}}{{HTML}}{{{}}}\n'.format(c.token, c.color))
+            f.write('\\newcommand\\adressStatistik{' + table.to_latex('l@{}l|rrrr', 'colordot') + '}')
 
-            # write table head
-            f.write('\\newcommand\\adressStatistik{\n')
-            f.write('\\begin{tblr}{colspec={l@{}l|rrrr},row{1,2}={bg=dnpblue,fg=white,font=\\bfseries},row{' + str(len(normal_categories) + 3) + '}={font=\\bfseries,bg=dnplightblue,fg=black}}\n')
-            f.write('& Adresskulisse &&&& \\\\\n')
-            f.write('&& Adressen & Einheiten \\Kunde & Einheiten DNP & Differenz \\\\\n')
+        table.set_cell(1, 2, 'Einheiten Kunde')
+        total_offset = len(normal_categories) + 2
+        table.set_cell(total_offset, 1, f'=SUM(C3:C{total_offset})')
+        table.set_cell(total_offset, 2, f'=SUM(D3:D{total_offset})')
+        table.set_cell(total_offset, 3, f'=SUM(E3:E{total_offset})')
+        table.set_cell(total_offset, 4, f'=SUM(F3:F{total_offset})')
 
-            # write normal results
-            for c in normal_categories:
-                cells = ' & '.join([str(x) for x in c.value])
-                f.write('\\colordot{{addresscolor{}}} & {} & {} \\\\\n'.format(c.token, c.label, cells))
-            
-            # write total
-            cells = ' & '.join([str(x) for x in totalResult])
-            f.write('\hline\n & Gesamt & {} \\\\\n'.format(cells))
+        for i in range(3, 3 + len(normal_categories)):
+            table.set_cell(i - 1, 4, f'=E{i}-D{i}')
 
-            # if present, write results for special categories
-            if len(special_categories) > 0:
-                f.write('&&&&& \\\\\n')
-                for c in special_categories:
-                    f.write('\\colordot{{addresscolor{}}} & {} & {} &&& \\\\\n'.format(c.token, c.label, c.value[0]))
-            f.write('\\end{tblr}}')
-
-        # Create a workbook and add a worksheet.
         workbook = xlsxwriter.Workbook(os.path.join(destination, "Adressauswertung.xlsx"))
-        worksheet = workbook.add_worksheet()
-
-        highlight = workbook.add_format()
-        highlight.set_bold()
-        highlight.set_bg_color('#001aae') # DNP blue
-        highlight.set_font_color('white')
-        highlight.set_align('right')
-
-        highlight_heading = workbook.add_format()
-        highlight_heading.set_bold()
-        highlight_heading.set_bg_color('#001aae') # DNP blue
-        highlight_heading.set_font_color('white')
-        highlight_heading.set_font_size(13)
-
-        bg_white = workbook.add_format()
-        bg_white.set_bg_color('white')
-
-        bg_gray = workbook.add_format()
-        bg_gray.set_bg_color('#dde2ff')
-
-        border_top = workbook.add_format()
-        border_top.set_top()
-        border_top.set_bold()
-        border_top.set_bg_color('#dde2ff')
-
-        # set column width
-        worksheet.set_column(0, 0, 2)
-        worksheet.set_column(1, 1, 25)
-        worksheet.set_column(2, 5, 15)
-
-        for i in range(0, 100):
-            for j in range(0, 20):
-                worksheet.write(i, j, "", bg_white)
-
-        for i in range(0, 2):
-            for j in range(0, 6):
-                worksheet.write(i, j, "", highlight)
-
-        worksheet.write(0, 1, "Adresskulisse", highlight_heading)
-        worksheet.write(1, 2, "Adressen", highlight)
-        worksheet.write(1, 3, "Einheiten Kunde", highlight)
-        worksheet.write(1, 4, "Einheiten DNP", highlight)
-        worksheet.write(1, 5, "Differenz", highlight)
-
-        for (i, c) in enumerate(normal_categories):
-            color_fmt = workbook.add_format()
-            color_fmt.set_bg_color('#' + c.color)
-            worksheet.write(i + 2, 0, '', color_fmt)
-            worksheet.write_row(i + 2, 1, [c.label] + c.value[:-1] + [f'=E{i+3}-D{i+3}'], bg_white)
-        
-        offset = len(normal_categories) + 2
-        worksheet.write_row(offset, 0, [
-            '', 'Gesamt', f'=SUM(C3:C{offset})', f'=SUM(D3:D{offset})', f'=SUM(E3:E{offset})', f'=SUM(F3:F{offset})'
-        ], border_top)
-        
-        if len(special_categories) > 0:
-            for (i, c) in enumerate(special_categories):
-                color_fmt = workbook.add_format()
-                color_fmt.set_bg_color('#' + c.color)
-                worksheet.write(offset + 2 + i, 0, '', color_fmt)
-                worksheet.write_row(offset + 2 + i, 1, [c.label, c.value[0]], bg_white)
-
+        table.to_xlsx(workbook, [2, 25, 15, 15, 15, 15])
         workbook.close()
 
     def calculate_trench_lengths(layer, destination):
@@ -429,155 +492,58 @@ class GeneratePresentation:
                 row.append(GeneratePresentation.filtered_length_sum(layer, f'{condition} and {column}'))
             result.append(row)
         
-        offenerTiefbau = []
-        for column in range(len(columns)):
-            offenerTiefbau.append(sum([row[column] for row in result]))
-        result = [offenerTiefbau] + result
-
+        offener_tiefbau = [sum([row[col] for row in result]) for col in range(len(columns))]
         rohrpressung = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'r\'')
         rohrpressung_privat = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'r\' and "Privatweg"')
         spuelbohrung = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'h\'')
         spuelbohrung_privat = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'h\' and "Privatweg"')
-        geschlossener_tiefbau = [rohrpressung + spuelbohrung, rohrpressung_privat + spuelbohrung_privat]
-
-        result_strings = [str(offenerTiefbau[0] + geschlossener_tiefbau[0])]
-        result_strings += ['~m & '.join([str(x) for x in row]) + '~m' for row in result]
-        result_strings.append(f'{geschlossener_tiefbau[0]}~m &&& {geschlossener_tiefbau[1]}~m')
-        result_strings.append(f'{rohrpressung}~m &&& {rohrpressung_privat}~m')
-        result_strings.append(f'{spuelbohrung}~m &&& {spuelbohrung_privat}~m')
+        geschlossener_tiefbau = [rohrpressung + spuelbohrung, None, None, rohrpressung_privat + spuelbohrung_privat]
 
         special_crossings = Counter(filter(None, QgsVectorLayerUtils.getValues(layer, '"Sonderquerung"')[0]))
+        
+        trench_table = Table()
+        trench_table.add_row([
+            'Tiefbau gesamt', (offener_tiefbau[0] + geschlossener_tiefbau[0], 'm'), None, None, None
+        ], Table.Highlight.PRIMARY)
+        trench_table.add_row([
+            '', None, ('im Straßenkörper', ''), ('mit Handschachtung', ''), ('in Privatweg', '')
+        ], Table.Highlight.PRIMARY)
+        trench_table.add_row(['Offener Tiefbau'] + offener_tiefbau, Table.Highlight.SECONDARY)
+
+        trench_table.add_row(['Asphalt'] + result[0], QColor('#db1e2a'))
+        trench_table.add_row(['Pflaster'] + result[1], QColor('#487bb6'))
+        trench_table.add_row(['Unbefestigt'] + result[2], QColor('#54b04a'))
+        trench_table.add_row(['Mosaikpflaster'] + result[3], QColor('#873bde'))
+        trench_table.add_row(['Kopfsteinpflaster'] + result[4], QColor('#00b0f0'))
+
+        trench_table.add_row(['Geschlossener Tiefbau'] + geschlossener_tiefbau, Table.Highlight.SECONDARY)
+        trench_table.add_row(['Rohrpressung', rohrpressung, None, None, rohrpressung_privat], QColor('#ffba0b'))
+        trench_table.add_row(['Spülbohrung',  spuelbohrung, None, None, spuelbohrung_privat], QColor('#01ffe1'))
+
         if special_crossings.total() == 0:
-            result_strings.append('')
+            trench_table.add_row(['Sonderquerungen', None, None, None, None], Table.Highlight.SECONDARY)
+            trench_table.add_row(['keine', None, None, None, None])
         else:
-            result_strings.append(str(special_crossings.total()) + '~St.')
+            trench_table.add_row(['Sonderquerungen', (special_crossings.total(), 'St.'), None, None, None], Table.Highlight.SECONDARY)
+            for (crossing, count) in special_crossings.most_common():
+                trench_table.add_row([crossing, (count, 'St.'), None, None, None])
+
+        trench_table.numbers_to_unit('m')
 
         with open(os.path.join(destination, "Praesentation", "TrenchStatistik.tex"), "w") as f:
-            f.write('''\\newcommand\\trenchStatistik{{
-\\begin{{tblr}}{{
-    colspec={{l@{{}}lrrrr}},
-    row{{1,2}}={{bg=dnpblue,fg=white,font=\\bfseries}},
-    row{{3,9,12}}={{bg=dnplightblue,fg=black,font=\\bfseries}}
-}}
-    & Tiefbau gesamt &{0}~m &&& \\\\
-    &&& im Straßenkörper & mit Handschachtung & in Privatweg \\\\
-    & Offener Tiefbau								    & {1} \\\\
-    \\colorrule{{trenchred}} 		& Asphalt 			& {2} \\\\
-    \\colorrule{{trenchblue}} 		& Pflaster 			& {3} \\\\
-    \\colorrule{{trenchgreen}} 	    & Unbefestigt		& {4} \\\\
-    \\colorrule{{trenchpurple}} 	& Mosaikpflaster	& {5} \\\\
-    \\colorrule{{trenchlightblue}}  & Kopfsteinpflaster	& {6} \\\\
-    & Geschlossener Tiefbau                             & {7} \\\\
-    \\colorrule{{trenchorange}} 	& Rohrpressung 		& {8} \\\\
-    \\colorrule{{trenchspuelbohrung}} & Spülbohrung 	& {9} \\\\
-    & Sonderquerungen & {10} &&& \\\\
-'''.format(*result_strings))
+            f.write('\\newcommand\\trenchStatistik{' + trench_table.to_latex('l@{}lrrrr', 'colorrule') + '}')
 
-            if special_crossings.total() == 0:
-                f.write('& keine &&&& \\\\\n')
-            else:
-                for (crossing, count) in special_crossings.most_common():
-                    f.write(f'& {crossing} & {count}~St. &&& \\\\\n')
-
-            f.write('\\end{tblr}}')
+        for (x, letter) in enumerate(['C', 'E', 'G', 'I']):
+            trench_table.set_cell(2, x + 1, (f'=SUM({letter}4:{letter}8)', 'm'))
+        
+        trench_table.set_cell(8, 1, ('=SUM(C10:C11)', 'm'))
+        trench_table.set_cell(8, 4, ('=SUM(I10:I11)', 'm'))
+        trench_table.set_cell(0, 1, ('=C3+C9', 'm'))
+        if special_crossings.total() > 0:
+            trench_table.set_cell(11, 1, (f'=SUM(C13:C{12+len(special_crossings)})', 'St.'))
 
         workbook = xlsxwriter.Workbook(os.path.join(destination, "Trenches.xlsx"))
-        worksheet = workbook.add_worksheet()
-
-        highlight = workbook.add_format()
-        highlight.set_bg_color('#001aae') # DNP blue
-        highlight.set_font_color('white')
-
-        highlight_heading = workbook.add_format()
-        highlight_heading.set_bg_color('#001aae') # DNP blue
-        highlight_heading.set_font_color('white')
-        highlight_heading.set_bold()
-        highlight_heading.set_font_size(14)
-
-        bg_white = workbook.add_format()
-        bg_white.set_bg_color('white')
-
-        bg_gray = workbook.add_format()
-        bg_gray.set_bg_color('#dde2ff')
-        bg_gray.set_bold()
-        bg_gray.set_font_size(12)
-
-        border_top = workbook.add_format()
-        border_top.set_top()
-        border_top.set_bg_color('#dde2ff')
-
-        border_top_right = workbook.add_format()
-        border_top_right.set_top()
-        border_top_right.set_right()
-        border_top_right.set_bg_color('#dde2ff')
-        border_top_right.set_bold()
-
-        border_right = workbook.add_format()
-        border_right.set_right()
-        border_right.set_bg_color('white')
-        border_right.set_bold()
-
-        border_right_gray = workbook.add_format()
-        border_right_gray.set_right()
-        border_right_gray.set_bg_color('#dde2ff')
-        border_right_gray.set_bold()
-
-        # set column widths
-        worksheet.set_column(0, 0, 25)
-        worksheet.set_column(1, 8, 15)
-        for i in [2, 4, 6, 8]:
-            worksheet.set_column(i, i, 2)
-
-        # set background
-        for i in range(0, 100):
-            for j in range(0, 20):
-                worksheet.write(i, j, "", bg_white)
-
-        for i in range(0, 2):
-            for j in range(0, 9):
-                worksheet.write(i, j, "", highlight)
-
-        for i in [2, 9, 13]:
-            for j in range(0, 9):
-                worksheet.write(i, j, "", bg_gray)
-
-        # table headings
-        worksheet.write_row(0, 0, ["Tiefbau gesamt", "=B3+B10", "m"], highlight_heading)
-        worksheet.write(1, 3, "im Straßenkörper", highlight)
-        worksheet.write(1, 5, "mit Handschachtung", highlight)
-        worksheet.write(1, 7, "in Privatweg", highlight)
-        worksheet.write(2, 0, "Offener Tiefbau", bg_gray)
-        worksheet.write(3, 0, "Asphalt", bg_white)
-        worksheet.write(4, 0, "Pflaster", bg_white)
-        worksheet.write(5, 0, "Unbefestigt", bg_white)
-        worksheet.write(6, 0, "Mosaikpflaster", bg_white)
-        worksheet.write(7, 0, "Kopfsteinpflaster", bg_white)
-        worksheet.write(9, 0, "Geschlossener Tiefbau", bg_gray)
-        worksheet.write(10, 0, "Rohrpressung", bg_white)
-        worksheet.write(11, 0, "Spülbohrung", bg_white)
-        worksheet.write(13, 0, "Sonderquerungen", bg_gray)
-
-        # offener tiefbau
-        worksheet.write_row(2, 1, [p for c in 'BDFH' for p in [f'=SUM({c}4:{c}8)', 'm']], bg_gray)
-        for (x, row) in enumerate(result[1:]):
-            worksheet.write_row(x + 3, 1, [p for q in row for p in [q, 'm']], bg_white)
-        
-        # geschlossener Tiefbau
-        worksheet.write_row(9, 1, ["=SUM(B11:B12)", "m"], bg_gray)
-        worksheet.write_row(9, 7, ["=SUM(H11:H12)", "m"], bg_gray)
-        worksheet.write_row(10, 1, [rohrpressung, "m"], bg_white)
-        worksheet.write_row(10, 7, [rohrpressung_privat, "m"], bg_white)
-        worksheet.write_row(11, 1, [spuelbohrung, "m"], bg_white)
-        worksheet.write_row(11, 7, [spuelbohrung_privat, "m"], bg_white)
-
-        if special_crossings.total() == 0:
-            worksheet.write(14, 0, 'keine', bg_white)
-        else:
-            worksheet.write(13, 1, special_crossings.total(), bg_gray)
-            worksheet.write(13, 2, 'St.', bg_gray)
-            for (i, (crossing, count)) in enumerate(special_crossings.most_common()):
-                worksheet.write_row(14 + i, 0, [crossing, count, 'St.'], bg_white)
-
+        trench_table.to_xlsx(workbook, [5, 25, 15, 2, 15, 2, 15, 2, 15, 2])
         workbook.close()
 
     def calculate_extent(self, references = []):
@@ -607,17 +573,35 @@ class GeneratePresentation:
         extent.scale(1.2)
         return extent
 
-    def write_poi_file(points, extent, destination):
+    def rectangle_around_point(self, point, width=100, height=100):
+        rect = QgsRectangle(
+            point.x() - width/2,
+            point.y() - height/2,
+            point.x() + width/2,
+            point.y() + height/2
+        )
+        return self.calculate_extent([rect])
+
+    def process_points_of_interest(self, points, layers, extent, destination):
         max_id = max([point["Punkt_ID"] for point in points])
         x_coords = [0] * max_id
         y_coords = [0] * max_id
         for point in points:
-            coords = GeneratePresentation.get_feature_coords(point, extent)
-            id = int(point["Punkt_ID"])
-            x_coords[id-1] = coords[0]
-            y_coords[id-1] = coords[1]
+            geometry = point.geometry()
+            if geometry.type() != QgsWkbTypes.PointGeometry:
+                continue
 
-        with open(destination, "w") as f:
+            pt = geometry.asPoint()
+            id = int(point["Punkt_ID"])
+            x_coords[id-1] = (pt.x() - extent.xMinimum()) / extent.width()
+            y_coords[id-1] = 1 - (pt.y() - extent.yMinimum()) / extent.height()
+
+            rect = self.rectangle_around_point(pt)
+            path = os.path.join(destination, "Bilder", f"fotopunkt{id}.pdf")
+            self.make_pic_pdf(layers, path, rect, zoom_factor=20)
+            self.increment_progess()
+
+        with open(os.path.join(destination, "Praesentation", "PointsOfInterest.tex"), "w") as f:
             x_coords_str = ''.join(['{' + str(x) + '}' for x in x_coords])
             y_coords_str = ''.join(['{' + str(y) + '}' for y in y_coords])
             f.write('\\storedata\\xcoords{' + x_coords_str + '}\n')
@@ -634,9 +618,11 @@ class GeneratePresentation:
         if not destination:
             return
         self.destination_directory = destination
-        images_dir = os.path.join(destination, "Karten")
+        maps_dir = os.path.join(destination, "Karten")
 
-        self.init_progress_bar(11)
+        points_of_interest = list(fotopunkt.getFeatures())
+
+        self.init_progress_bar(11 + len(points_of_interest))
         self.copy_template("common", destination)
         self.copy_template("address_and_trenches", destination)
         self.increment_progess()
@@ -647,33 +633,35 @@ class GeneratePresentation:
         GeneratePresentation.calculate_trench_lengths(trenches, destination)
         self.increment_progess()
 
-        poi_file = os.path.join(destination, "Praesentation", "PointsOfInterest.tex")
         extent = self.calculate_extent([addresses.extent(), trenches.extent()])
-        GeneratePresentation.write_poi_file(list(fotopunkt.getFeatures()), extent, poi_file)
+        self.process_points_of_interest(points_of_interest, [addresses, trenches, osm], extent, destination)
         self.increment_progess()
 
-        titlepic_path = os.path.join(images_dir, "titelbild.pdf")
+        titlepic_path = os.path.join(destination, "Bilder", "titelbild.pdf")
         self.make_pic_pdf([fotopunkt, addresses, polygons, osm], titlepic_path)
         self.increment_progess()
 
-        address_check_path = os.path.join(images_dir, "adresscheck.pdf")
+        address_check_path = os.path.join(maps_dir, "adresscheck.pdf")
         self.make_pic_pdf([addresses, polygons, osm], address_check_path)
         self.increment_progess()
 
-        hp_distribution_path = os.path.join(images_dir, "hp-verteilung.pdf")
+        hp_distribution_path = os.path.join(maps_dir, "hp-verteilung.pdf")
+        color1 = QColor(72, 123, 182)
+        color2 = QColor(228, 187, 114)
+        color3 = QColor(84, 174, 74)
         hp_distribution = GeneratePresentation.style_layer(addresses, [
-            ('"Total DNP" > 12', QColor(72, 123, 182), QColor(60, 100, 160), 0.3),
-            ('"Total DNP" > 2 and "Total DNP" <= 12', QColor(228, 187, 114), QColor(190, 160, 90), 0.3),
-            ('"Total DNP" <= 2 and "Total DNP" is not null', QColor(84, 174, 74), QColor(70, 150, 60), 0.3)
+            ('"Total DNP" > 12', color1, color1.darker(), 0.3),
+            ('"Total DNP" > 2 and "Total DNP" <= 12', color2, color2.darker(), 0.3),
+            ('"Total DNP" <= 2 and "Total DNP" is not null', color3, color3.darker(), 0.3)
         ])
         self.make_pic_pdf([hp_distribution, polygons, osm], hp_distribution_path)
         self.increment_progess()
 
-        trenches_path = os.path.join(images_dir, "trenches.pdf")
+        trenches_path = os.path.join(maps_dir, "trenches.pdf")
         self.make_pic_pdf([trenches, polygons, osm], trenches_path)
         self.increment_progess()
 
-        by_hands_path = os.path.join(images_dir, "trenches-handschachtung.pdf")
+        by_hands_path = os.path.join(maps_dir, "trenches-handschachtung.pdf")
         by_hands = GeneratePresentation.style_layer(trenches, [
             ('"Handschachtung" = false', QColor('black'), None, 0.3),
             ('"Handschachtung" = true', QColor('#54b04a'), None, 0.7)
@@ -681,7 +669,7 @@ class GeneratePresentation:
         self.make_pic_pdf([by_hands, polygons, osm], by_hands_path)
         self.increment_progess()
 
-        by_streets_path = os.path.join(images_dir, "trenches-strassenkoerper.pdf")
+        by_streets_path = os.path.join(maps_dir, "trenches-strassenkoerper.pdf")
         by_streets = GeneratePresentation.style_layer(trenches, [
             ('"In_Strasse" = false', QColor('black'), None, 0.3),
             ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.7)
@@ -689,7 +677,7 @@ class GeneratePresentation:
         self.make_pic_pdf([by_streets, polygons, osm], by_streets_path)
         self.increment_progess()
 
-        by_private_path = os.path.join(images_dir, "trenches-privatweg.pdf")
+        by_private_path = os.path.join(maps_dir, "trenches-privatweg.pdf")
         by_private = GeneratePresentation.style_layer(trenches, [
             ('"Privatweg" = false', QColor('black'), None, 0.3),
             ('"Privatweg" = true', QColor('#487bb6'), None, 0.7)
@@ -708,7 +696,8 @@ class GeneratePresentation:
     def attempt_instantiate_address_trench_template(self):
         try:
             self.instantiate_address_trench_template()
-        except RuntimeError as e:
+        except Exception as e:
+            self.iface.messageBar().clearWidgets()
             self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
 
     def instantiate_surface_template(self):
@@ -721,27 +710,25 @@ class GeneratePresentation:
         if not destination:
             return
         self.destination_directory = destination
-        images_dir = os.path.join(destination, "Karten")
 
-        self.init_progress_bar(5)
+        points_of_interest = list(fotopunkt.getFeatures())
+        self.init_progress_bar(5 + len(points_of_interest))
         self.copy_template("common", destination)
         self.copy_template("surface_classification", destination)
         self.increment_progess()
 
-        categories = SymbologyCategory.extract_symbology_categories(oberflaechen, 'Belag', ['$area', '1'])
-        GeneratePresentation.calculate_surface_statistics(categories, destination)
+        GeneratePresentation.calculate_surface_statistics(oberflaechen, destination)
         self.increment_progess()
 
-        poi_file = os.path.join(destination, "Praesentation", "PointsOfInterest.tex")
         extent = self.calculate_extent([oberflaechen.extent()])
-        GeneratePresentation.write_poi_file(list(fotopunkt.getFeatures()), extent, poi_file)
+        self.process_points_of_interest(points_of_interest, [oberflaechen, osm], extent, destination)
         self.increment_progess()
 
-        titlepic_path = os.path.join(images_dir, "titelbild.pdf")
+        titlepic_path = os.path.join(destination, "Bilder", "titelbild.pdf")
         self.make_pic_pdf([fotopunkt, oberflaechen, polygons, osm], titlepic_path)
         self.increment_progess()
 
-        map_path = os.path.join(images_dir, "karte.pdf")
+        map_path = os.path.join(destination, "Karten", "karte.pdf")
         self.make_pic_pdf([oberflaechen, polygons, osm], map_path)
         self.increment_progess()
 
@@ -756,118 +743,101 @@ class GeneratePresentation:
     def attempt_instantiate_surface_template(self):
         try:
             self.instantiate_surface_template()
-        except RuntimeError as e:
+        except Exception as e:
+            self.iface.messageBar().clearWidgets()
             self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
 
-    def calculate_surface_statistics(categories, destination):
+    def calculate_surface_statistics(layer, destination):
+        categories = SymbologyCategory.extract_symbology_categories(
+            layer,
+            'Belag',
+            ['$area / (CASE WHEN "Typ" = \'b\' THEN 1.281 ELSE 5.787 END)', '1']
+        )
         cats = {}
         for c in categories:
             cats[c.token] = c
         
         class CategoryGroup:
-            def __init__(self, title, factor, with_numbers, tokens):
-                self.title = title
-                self.factor = factor
-                self.with_numbers = with_numbers
-                self.rows = []
-                self.total_row_index = -1
+            def __init__(self, title, categories=[]):
+                self.table = Table()
+                self.total_meters = 0
+                self.total_numbers = 0
 
-                for token in tokens:
-                    self.add_category(cats[token])
+                self.table.add_row(
+                    [title, ('Länge', ''), ('Anteil', '')],
+                    Table.Highlight.PRIMARY
+                )
+
+                for c in categories:
+                    self.add_category(c)
             
-            def add_category(self, c, count_percentage = True):
-                self.rows.append([
-                    '\\colorsquare{' + c.token + '}\\hspace{5pt}',
-                    c.label,
-                    c.value[0] / self.factor,
-                    0,
-                    c.value[1],
-                    count_percentage
-                ])
+            def add_category(self, c):
+                value = c.value[0]
+                self.total_meters += value
+                self.table.add_row([c.label, value, 0], c.color)
             
-            def add_total(self):
-                self.total_row_index = len(self.rows)
-                self.rows.append([
-                    '', 'Gesamt',
-                    sum([r[2] if r[5] else 0 for r in self.rows]),
-                    100,
-                    sum([r[4] for r in self.rows])
-                ])
+            def add_total(self, label='Gesamt'):
+                for row in self.table.rows[1:]:
+                    row[2] = row[1] * 100 / self.total_meters
+
+                self.table.add_row(
+                    [label, self.total_meters, 100],
+                    Table.Highlight.SECONDARY
+                )
+                return self.total_meters
             
-            def calculate_percentages(self):
-                if self.total_row_index < 0:
-                    return
-                
-                total = self.rows[self.total_row_index][2]
-                print(self.rows[0:self.total_row_index], total)
-                for row in self.rows[0:self.total_row_index]:
-                    row[3] = row[2] * 100 / total
+            def cleanup(self):
+                for row in self.table.rows:
+                    if isinstance(row[1], int) or isinstance(row[1], float):
+                        row[1] = (round(row[1]), 'm')
+                    if isinstance(row[2], int) or isinstance(row[2], float):
+                        row[2] = (round(row[2]), '%')
             
-            def to_string(self):
-                result = '\\begin{tblr}{width=\\textwidth,colspec={l@{}Xrrr},row{1}={bg=dnpblue,fg=white,font=\\bfseries},row{' + str(self.total_row_index + 2) + '}={font=\\bfseries}}\n'
-                result += ' & ' + self.title + ' & Länge & Anteil & Anzahl \\\\\n'
+            def to_latex(self):
+                colspec = 'l@{}X[l]rr'
+                return self.table.to_latex(colspec, 'colorsquare')
 
-                self.calculate_percentages()
+        street_types = ['a', 't', 'g', 'v', 'm', 'n']
+        street_categories = [cats[token] for token in street_types]
+        sidewalk = CategoryGroup('Oberflächen Bürgersteig', street_categories)
+        sidewalk_total = sidewalk.add_total()
+        sidewalk.cleanup()
 
-                for row in self.rows:
-                    if row[5]:
-                        # counts into percentage
-                        row[3] = str(round(row[3])) + '~%'
-                    else:
-                        row[3] = ''
-                    if not self.with_numbers:
-                        row[4] = ''
-
-                    result += f'{row[0]} & {row[1]} & {round(row[2])}~m & {row[3]} & {row[4]} \\\\\n'
-                
-                result += '\\end{tblr}\n'
-                return result
-
-        sidewalk_types = ['a', 't', 'g', 'v', 'm', 'n']
-        sidewalk_factor = 1.281
-        sidewalk = CategoryGroup('Oberflächen Bürgersteig', sidewalk_factor, False, sidewalk_types)
-        sidewalk.add_total()
-        print(sidewalk.to_string())
-
-        street_types = ['sa', 'st', 'sg', 'sm']
-        street_factor = 5.787
-        street = CategoryGroup('Oberflächen Straße', street_factor, True, street_types)
-        street.add_category(cats['sn'], False)
-        street.add_total()
-        print(street.to_string())
-
-        return
+        street_types = ['sa', 'st', 'sg', 'sm', 'sn']
+        street_categories = [cats[token] for token in street_types]
+        street = CategoryGroup('Oberflächen Straße', street_categories)
+        street_total = street.add_total()
+        street.cleanup()
 
         special_types = ['x', 'sx']
-        categories = [sidewalk_types, street_types, special_types]
-        category_names = ['Bürgersteig', 'Straße', 'Sonderquerung']
-        area_to_length_factors = [1.281, 5.787, 1]
+        special_categories = [cats[token] for token in special_types]
+        special = CategoryGroup('Sonderquerungen', special_categories)
+        special.add_total()
+        special.cleanup()
+        number_special = cats['sx'].value[1]
+
+        summary = CategoryGroup('Gesamtoberfläche')
+        summary.table.add_row(['Bürgersteig', sidewalk_total, 0])
+        summary.table.add_row(['Straße', street_total, 0])
+        summary.total_meters = sidewalk_total + street_total
+        summary.add_total()
+        summary.cleanup()
 
         with open(os.path.join(destination, "Praesentation", "OberflaechenStatistik.tex"), "w") as f:
-            # define colors
-            for c in categories:
-                f.write('\\definecolor{{surface{}}}{{HTML}}{{{}}}\n'.format(c.token, c.color))
-
             f.write('\\newcommand\\surfacetypes{')
             for c in categories:
-                f.write(f'\\item[\\colorsquare{{{c.token}}}] {c.label}\n')
+                f.write('\\item[\\colorsquare{' + color_to_tikz(c.color) + '}] ' + c.label + '\n')
             f.write('}\n')
 
-        for (category, name, factor) in zip(categories, category_names, area_to_length_factors):
-            lengths = []
-            numbers = []
+            f.write('\\newcommand\\oberflaechenBuergersteig{' + sidewalk.to_latex() + '}\n')
+            f.write('\\newcommand\\oberflaechenStrasse{' + street.to_latex() + '}\n')
+            f.write('\\newcommand\\oberflaechenSonderquerung{' + special.to_latex() + '}\n')
+            f.write('\\newcommand\\oberflaechenGesamt{' + summary.to_latex() + '}\n')
 
-            for type in category:
-                query = f'CASE WHEN "Belag" = \'{type}\' THEN $area ELSE 0 END'
-                values = list(filter(lambda x: x and x > 0, QgsVectorLayerUtils.getValues(layer, query)[0]))
-                lengths.append(sum(values) / factor)
-                numbers.append(len(values))
-            
-            total = sum(lengths)
-            if not total:
-                total = 1
-            for (i, type) in enumerate(category):
-                print('{} {} {} {}'.format(
-                    type, round(lengths[i]), (lengths[i] * 100 / total), numbers[i]
-                ))
-            print('{}\t\t{}\t\t{}%\n\n'.format(name, round(total), 100))
+        workbook = xlsxwriter.Workbook(os.path.join(destination, "Oberflaechenanalyse.xlsx"))
+        worksheet = workbook.add_worksheet()
+        sidewalk.table.to_xlsx(workbook, [2, 30, 10, 2, 10, 2, 10], worksheet=worksheet)
+        street.table.to_xlsx(workbook, worksheet=worksheet, offset=9)
+        special.table.to_xlsx(workbook, worksheet=worksheet, offset=17)
+        summary.table.to_xlsx(workbook, worksheet=worksheet, offset=22)
+        workbook.close()

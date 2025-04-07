@@ -10,13 +10,14 @@
 \usepackage{adjustbox}
 
 % square indicating classified surface
-\newcommand\colorsquare[1]{\tikz{\draw[draw=black,fill=surface#1] (0, 0) rectangle (.23,.23);}}
+\newcommand\colorsquare[1]{\tikz{\draw[draw=black,fill=#1] (0, 0) rectangle (.23,.23);}\hspace{4pt}}
 
-% info shown in the footline
+% info shown on titlepage and in the footline
 \author[DNP]{Deutsche Netzplanung}
-\title[Ergebnisse \Ort]{\textbf{Ergebnisse} \\ \Ort}
-\subtitle{Oberflächenanalyse}
+\title[Oberflächenanalyse \Ort{} (\Kreis, \Land)]{\textbf{Oberflächenanalyse} \\ \Ort}
 \date{\Abgabedatum}
+\renewcommand\titlelinetwo{\Kreis}
+\renewcommand\titlelinethree{\Land}
 
 
 \begin{document}
@@ -54,27 +55,13 @@
 	\scriptsize
 	\begin{itemize}
 		\surfacetypes
-
-		\item[\colorsquare{a}] Asphalt
-		\item[\colorsquare{t}] Pflaster
-		\item[\colorsquare{g}] Unbefestigt
-		\item[\colorsquare{v}] Verdichtet/Schotter
-		\item[\colorsquare{m}] Kopfsteinpflaster
-		\item[\colorsquare{n}] kein Bürgersteig
-		\item[\colorsquare{sa}] Asphaltierte Straße
-		\item[\colorsquare{st}] Gepflasterte Straße
-		\item[\colorsquare{sg}] Unbefestigte Straße
-		\item[\colorsquare{sm}] Straße mit Kopfsteinpflaster
-		\item[\colorsquare{sn}] keine öffentliche Straße
-		\item[\colorsquare{sx}] Sonderquerung Straße
-		\item[\colorsquare{x}] Sonderquerung
 	\end{itemize}
 \end{mapframe}
 
 \begin{mapframe}{Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
-		\node[inner sep=0] (bild1) at (0,0) {\includegraphics[width=4cm]{../Bilder/innenstadt-karte.png}};
+		\node[inner sep=0] (bild1) at (0,0) {\includegraphics[width=4cm]{../Bilder/fotopunkt1.pdf}};
 	} \\[.3cm]
 	\includegraphics[width=4cm]{../Bilder/innenstadt.png} \\
 	\scriptsize \bildeins
@@ -84,7 +71,7 @@
 \begin{mapframe}{Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
-		\node[inner sep=0] (bild2) at (0,0) {\includegraphics[width=4cm]{../Bilder/wohnsiedlung-karte.png}};
+		\node[inner sep=0] (bild2) at (0,0) {\includegraphics[width=4cm]{../Bilder/fotopunkt2.pdf}};
 	} \\[.3cm]
 	\includegraphics[width=4cm]{../Bilder/wohnsiedlung.png} \\
 	\scriptsize \bildzwei
@@ -94,7 +81,7 @@
 \begin{mapframe}{Besonderheit}{../Karten/karte.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
-		\node[inner sep=0] (bild3) at (0,0) {\includegraphics[width=4cm]{../Bilder/besonderheit-karte.png}};
+		\node[inner sep=0] (bild3) at (0,0) {\includegraphics[width=4cm]{../Bilder/fotopunkt3.pdf}};
 	} \\[.3cm]
 	\includegraphics[width=4cm]{../Bilder/besonderheit.png} \\
 	\scriptsize \bilddrei
@@ -104,45 +91,18 @@
 \begin{frame}[t]{Grunddaten für Kostenanalyse}
 	\scriptsize
 
-	\adjustbox{valign=t}{\begin{minipage}{.47\textwidth}
-		\begin{tblr}{width=\textwidth,colspec={l@{}Xrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{8}={font=\bfseries}}
-			& Oberfläche Bürgersteige & Länge & Anteil \\
-			\colorsquare{g}\hspace{5pt} & Unbefestigt & 19845~m & 43~\% \\
-			\colorsquare{v} & Verdichtet & 19845~m & 43~\% \\
-			\colorsquare{t} & Pflaster & 19845~m & 43~\% \\
-			\colorsquare{a} & Asphalt & 19845~m & 43~\% \\
-			\colorsquare{m} & Kopfstein-/Mosaikpflaster & 19845~m & 43~\% \\
-			\colorsquare{n} & kein Bürgersteig & 19845~m & 43~\% \\
-			& Gesamt & 19845~m & 100~\% \\
-		\end{tblr}
+	\adjustbox{valign=t}{\begin{minipage}{.49\textwidth}
+		\oberflaechenBuergersteig
 		\end{minipage}}\hfill%
-	\adjustbox{valign=t}{\begin{minipage}[t]{.52\textwidth}
-		\begin{tblr}{width=\textwidth,colspec={l@{}X[l]rrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{4}={font=\bfseries}}
-			& Sonderquerungen & Länge & Anteil & Anzahl \\
-			& Bach-, Flussquerung Bürgersteig & 62~m & 63~\% & 2 \\
-			& Bach-, Flussquerung Straße & 37~m & 37~\% & 1 \\
-			& Gesamt & 99~m & 100~\% & 3 \\
-		\end{tblr}
-	\end{minipage}}
+	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
+		\oberflaechenStrasse
+	\end{minipage}}\vspace{.2cm}
 	
-	\adjustbox{valign=t}{\begin{minipage}[t]{.47\textwidth}
-		\begin{tblr}{width=\textwidth,colspec={l@{}Xrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{7}={font=\bfseries}}
-			& Oberfläche Straße & Länge & Anteil \\
-			\colorsquare{sg}\hspace{5pt} & Unbefestigte Straße & 23~m & 43~\% \\
-			\colorsquare{st} & Gepflasterte Straße & 12~m & 43~\% \\
-			\colorsquare{sa} & Asphaltierte Straße & 124~m & 43~\% \\
-			\colorsquare{sm} & Straße mit Kopfsteinpflaster & 234~m & 43~\% \\
-			& nicht BIS-geeignet & 2000~m & 43~\% \\
-			& Gesamt & 5000~m & 100~\% \\
-		\end{tblr}
+	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
+		\oberflaechenSonderquerung
 	\end{minipage}}\hfill%
-	\adjustbox{valign=t}{\begin{minipage}[t]{.52\textwidth}
-		\begin{tblr}{width=\textwidth,colspec={l@{}Xrr},row{1}={bg=dnpblue,fg=white,font=\bfseries},row{4}={font=\bfseries}}
-			& Gesamtoberfläche & Länge & Anteil \\
-			& Bürgersteig & 19845~m & 43~\% \\
-			& Straße 	  & 19845~m & 43~\% \\
-			& Gesamt	  & 19845~m & 100~\% \\
-		\end{tblr}
+	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
+		\oberflaechenGesamt
 	\end{minipage}}
 \end{frame}
 

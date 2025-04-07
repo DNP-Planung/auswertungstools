@@ -23,13 +23,15 @@
 \newcommand\colordot[1]{\tikz{\draw[white,opacity=0] (0,0) -- (0,-.12);\draw[white,opacity=0] (0,0) -- (.2,0);\node[inner sep=-2,circle,draw=black,fill=#1] at (0,0) {};}}
 
 % short rule to signify a trench
-\newcommand\colorrule[1]{\tikz{\draw[white,opacity=0] (0,0) -- (0,-.08);\draw[white,opacity=0] (0,0) -- (.58,0);\fill[#1] (0,0) rectangle (.51,.08);}}
+\newcommand\colorrule[1]{\tikz{\draw[white,opacity=0] (0,0) -- (0,-.08);\draw[white,opacity=0] (0,0) -- (.58,0);\fill[fill=#1] (0,0) rectangle (.51,.08);}}
 
-% info shown in the footline
+% info shown on titlepage and in the footline
 \author[DNP]{Deutsche Netzplanung}
-\title[Ergebnisse \Ort]{\textbf{Ergebnisse} \\ \Ort}
-\subtitle{Adresscheck und Trenches auf Basis von Bildmaterialien}
+\title[Ergebnisse \Ort{} (\Kreis, \Land)]{\textbf{Ergebnisse} \\ \Ort}
 \date{\Abgabedatum}
+\subtitle{Adresscheck und Trenches auf Basis von Bildmaterialien}
+\renewcommand\titlelinetwo{\Kreis}
+\renewcommand\titlelinethree{\Land}
 
 \begin{document}
 	

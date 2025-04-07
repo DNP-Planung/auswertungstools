@@ -30,10 +30,11 @@
 
 % define the fading used on the title slide
 \usepackage{tikz}
-\usetikzlibrary{fadings,calc}
+\usetikzlibrary{fadings,calc,positioning}
 \tikzfading[name=dnpfading,top color=transparent!100,bottom color=transparent!0]
 
 \tikzset{fotopunkt/.style={scale=.7,inner sep=1pt,text=white,draw=white,fill=dnpblue,circle}}
+\tikzset{titlepageline/.style={anchor=north west,white,text width=4.9cm}}
 
 % draw the zoom triangle between a point of interest and its photo
 %  * number of the point (#1)
@@ -73,17 +74,41 @@
 \logo{\includegraphics[width=.1\textwidth]{../Bilder/Logo.png}}
 \newcommand{\nologo}{\setbeamertemplate{logo}{}} % command to set the logo to nothing
 
+\def\titlelinetwo{}
+\def\titlelinethree{}
+
 \setbeamertemplate{date}{}
 
 \setbeamertemplate{title page}{
 	\begin{tikzpicture}[overlay, remember picture, shift={(current page.south west)}]
-		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Karten/titelbild.pdf}};
+		\node[inner sep=0pt] at (10, \paperheight/2) {\includegraphics[height=\paperheight]{../Bilder/titelbild.pdf}};
 		\fill[dnplightblue,path fading=dnpfading] (0, 0) rectangle (\paperwidth, \paperheight);
 		\fill[dnpblue] (0, 0) rectangle  (5.3, \paperheight);
-		\node[white,anchor=west,text width=4.9cm] at (.2, 7) {\inserttitle{}};
-		\node[white,anchor=west,text width=4.9cm] at (.2, 5) {\scriptsize \insertsubtitle{}};
+		\node[titlepageline] (title) at (.2, 7) {\inserttitle{}};
+		\node[below=.1cm of title.south west,titlepageline,font=\scriptsize] (line2) {\titlelinetwo};
+		\node[below=.1cm of line2.south west,titlepageline,font=\scriptsize] (line3) {\titlelinethree};
+		\node[below=1cm of line3.south west,titlepageline,font=\scriptsize] (subtitle) {\insertsubtitle{}};
 		\node[white,anchor=south west] at (.2, .2) {\tiny \insertdate{}};
 		\node[anchor=south east] at (\paperwidth, .1) {\insertlogo{}};
 	\end{tikzpicture}
 	\addtocounter{framenumber}{-1} % exclude titlepage from page numbering
 }
+
+\makeatletter
+\setbeamertemplate{footline}
+{
+	\leavevmode%
+	\hbox{%
+		\begin{beamercolorbox}[wd=.22222\paperwidth,ht=2.25ex,dp=1ex,left]{author in head/foot}%
+			\usebeamerfont{author in head/foot}\hspace*{2ex}\insertshortauthor
+		\end{beamercolorbox}%
+		\begin{beamercolorbox}[wd=.55555\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}%
+			\usebeamerfont{title in head/foot}\insertshorttitle
+		\end{beamercolorbox}%
+		\begin{beamercolorbox}[wd=.22222\paperwidth,ht=2.25ex,dp=1ex,right]{date in head/foot}%
+			\usebeamerfont{date in head/foot}
+			\insertframenumber{} / \inserttotalframenumber\hspace*{2ex} 
+	\end{beamercolorbox}}%
+	\vskip0pt%
+}
+\makeatother
