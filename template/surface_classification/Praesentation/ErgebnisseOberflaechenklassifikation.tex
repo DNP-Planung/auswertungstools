@@ -11,6 +11,7 @@
 
 % square indicating classified surface
 \newcommand\colorsquare[1]{\tikz{\draw[draw=black,fill=#1] (0, 0) rectangle (.23,.23);}\hspace{4pt}}
+\newcommand\hatchedsquare{\tikz{\draw[draw=black,pattern=north east lines] (0, 0) rectangle (.23,.23);}\hspace{4pt}}
 
 % info shown on titlepage and in the footline
 \author[DNP]{Deutsche Netzplanung}
@@ -21,7 +22,7 @@
 
 
 \begin{document}
-	
+
 {
 	\setbeamertemplate{footline}{}
 	\maketitle
@@ -92,45 +93,43 @@
 	\scriptsize
 
 	\adjustbox{valign=t}{\begin{minipage}{.49\textwidth}
-		\oberflaechenBuergersteig
-		\end{minipage}}\hfill%
-	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
-		\oberflaechenStrasse
-	\end{minipage}}\vspace{.2cm}
-	
-	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
-		\oberflaechenSonderquerung
+		\centering
+		\resizebox{.7\textwidth}{!}{
+			\oberflaechenBuergersteig
+		}
 	\end{minipage}}\hfill%
 	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
-		\oberflaechenGesamt
+		\centering
+		\resizebox{.7\textwidth}{!}{
+			\oberflaechenStrasse
+		}
+	\end{minipage}}\vspace{.2cm}
+
+	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
+		\centering
+		\resizebox{.7\textwidth}{!}{
+			\oberflaechenSonderposition
+		} \\
+		\resizebox{.7\textwidth}{!}{
+			\oberflaechenSonderquerung
+		}
+	\end{minipage}}\hfill%
+	\adjustbox{valign=t}{\begin{minipage}[t]{.49\textwidth}
+		\centering
+		\resizebox{.7\textwidth}{!}{
+			\oberflaechenGesamt
+		}
 	\end{minipage}}
 \end{frame}
 
 \begin{frame}{Preise \Ort}
 	\begin{itemize}
-		\setlength{\itemsep}{5pt} 
+		\setlength{\itemsep}{5pt}
 		\item Kommerzielles Modell
 		\begin{itemize}
-			\item[$\bullet$] Analysierte Straßenmeter mit einem Preis von $0.21~\text{\euro}$ pro Meter
-			\item[$\bullet$] Kosten für \Ort: 1000 m $\:\times$ $0.21~\frac{\text{\euro}}{m} = 210~\text{\euro}$
-			%\item[$\bullet$] Nicht rechnungsrelevant: $\Differenz$ m $\:\times$ $0\euro$ = $0\euro$
-			\begin{itemize}
-				\item[$\bullet$] \Ort{} - Ziertheim: $24.401$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m	
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m			
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-				%\item[$\bullet$] \Ort - Polygon: $yyy$m
-			\end{itemize}
+			\preisliste
 		\end{itemize}
-		\item Timing
-		\begin{itemize}
-			\item[$\bullet$] Abgabe am \Abgabedatum
-		\end{itemize}
+		\item Timing: Abgabe am \Abgabedatum
 	\end{itemize}
 \end{frame}
 

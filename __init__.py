@@ -1,24 +1,295 @@
-from PyQt5.QtWidgets import QAction, QFileDialog, QProgressBar, QMenu, QToolButton
+from datetime import datetime
+from PyQt5.QtWidgets import *
 from qgis.core import *
 from qgis.gui import *
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtCore import QSize, Qt
+from qgis.PyQt.QtXml import QDomDocument
 import os, shutil, re, math
 from . import xlsxwriter
 from collections import Counter
 
 
+'''
+Provide the entry point for the qgis plugin.
+'''
 def classFactory(iface):
     return GeneratePresentation(iface)
 
+'''
+Turn a QColor into a color string that TikZ can understand
+'''
 def color_to_tikz(c):
     return f'{{rgb,255:red,{c.red()};green,{c.green()};blue,{c.blue()}}}'
 
+class Task:
+    def __init__(self, run, effort=1, name=''):
+        self.run = run
+        self.effort = effort
+        self.name = name
+
+    @staticmethod
+    def synchronous(run, effort=1, name=''):
+        def callback(data, resolve, reject):
+            try:
+                run(data)
+                resolve()
+            except Exception as e:
+                reject(e)
+
+        return Task(callback, effort, name)
+
+
+class TaskQueue:
+    IDLE = 0
+    RUNNING = 1
+    ABORTED = 2
+
+    def __init__(self):
+        self.tasks = []
+        self.total_effort = 0
+        self.progress = 0
+        self.status = TaskQueue.IDLE
+        self.data = dotdict()
+
+        def noop(*args):
+            pass
+
+        self.on_task_complete = noop
+        self.on_error = noop
+
+    def notify(self):
+        total = self.total_effort
+        progress = self.progress / total if total > 0 else 0
+        self.on_task_complete(progress)
+
+    def handle_error(self, e):
+        self.on_error(e)
+        self.abort()
+
+    def add_task(self, run, effort=1, name=''):
+        task = Task.synchronous(run, effort, name)
+        self.tasks.append(task)
+        self.total_effort += effort
+
+    def add_async_task(self, run, effort=1, name=''):
+        task = Task(run, effort, name)
+        self.tasks.append(task)
+        self.total_effort += effort
+
+    def next(self):
+        if self.status == TaskQueue.ABORTED:
+            return
+
+        if len(self.tasks) == 0:
+            self.status = TaskQueue.IDLE
+            return
+
+        task = self.tasks.pop(0)
+        def callback():
+            self.progress += task.effort
+            self.notify()
+            self.next()
+
+        task.run(self.data, callback, self.handle_error)
+
+    def start(self):
+        self.status = TaskQueue.RUNNING
+        self.next()
+
+    def abort(self):
+        self.status = TaskQueue.ABORTED
+
+
+'''
+Turn a dictionary into one whose attributes can be accessed using dot
+notation. Example:
+
+  person = { 'age': 31 }
+  print(person['age'])    # 31
+  print(person.age)       # 31
+'''
+class dotdict(dict):
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+'''
+QWiget to let the user select a directory. Consists of a QLabel to display
+the currently selected directory and a button which opens a selection dialog.
+'''
+class SelectDirectoryWidget(QWidget):
+    def __init__(self, default=''):
+        super().__init__()
+
+        # self.path contains the currently selected directory.
+        self.path = default
+
+        self.label = QLabel(self.path)
+        self.label.setLineWidth(1)
+        self.label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        button_text = 'auswählen'
+        self.button = QPushButton(button_text)
+        self.button.clicked.connect(self.selectDirectory)
+        width = self.button.fontMetrics().boundingRect(button_text).width() + 7
+        self.button.setMaximumWidth(width)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.label)
+        layout.addWidget(self.button)
+
+    def selectDirectory(self):
+        self.path = QFileDialog.getExistingDirectory(None, 'Ordner auswählen')
+        self.label.setText(self.path)
+
+
+'''
+QDialog to ask the user for metadata and layers to evaluate.
+'''
+class EvaluationDialog(QDialog):
+
+    '''
+    * on_accept: Callback function once the dialog is accepted (user clicks OK).
+    * data: Dictionary to store the user input. It should already contain the
+      following attributes:
+      - title: Title of the dialog.
+      - destination: Default value for directory selection.
+    * text_fields: Text metadata the user should be asked to input. For example,
+        { 'age': { 'label': 'Alter', 'value': 31   } }
+      would ask the user to enter their age, with a default value of 31. The
+      users answer will be written to data.age.
+    * layer_fields: Layers the user should be asked to choose. Example:
+      {
+        'polygons': {
+          'label': 'Polygone',
+          'required': ['Ort', 'Kreis', 'Bundesland'],
+          'renderer': 'categorizedSymbol'
+        }
+      }
+      This would prompt the reader to select a layer with the fields 'Ort',
+      'Kreis', 'Bundesland' and a QgsCategorizedSymbolRenderer.
+    '''
+    def __init__(self, on_accept, data, text_fields={}, layer_fields={}):
+        super().__init__()
+        self.setWindowTitle(data.title)
+
+        self.on_accept = on_accept
+        layout = QFormLayout()
+
+        self.data = data
+        self.text_fields = {}
+        self.layer_fields = {}
+        self.feature_fields = {}
+
+        for key, field in text_fields.items():
+            input = QLineEdit(self)
+            input.setText(field['value'])
+            self.text_fields[key] = input
+            layout.addRow(field['label'], input)
+
+        for key, field in layer_fields.items():
+            input = QgsMapLayerComboBox(self)
+            if 'required' in field:
+                renderer = field['renderer'] if 'renderer' in field else ''
+                input.setExceptedLayerList(EvaluationDialog.get_exceptions(field['required'], renderer, False))
+            else:
+                input.setAllowEmptyLayer(True, 'kein Hintergrund')
+            if 'default' in field and field['default']:
+                input.setLayer(field['default'])
+
+            self.layer_fields[key] = input
+            layout.addRow(field['label'], input)
+
+        self.directoryChooser = SelectDirectoryWidget(data.destination)
+        layout.addRow('Zielordner:', self.directoryChooser)
+
+        QBtn = (
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        buttonBox = QDialogButtonBox(QBtn)
+        buttonBox.accepted.connect(self.callback)
+        buttonBox.rejected.connect(self.reject)
+        layout.addRow(buttonBox)
+
+        self.setLayout(layout)
+        self.setFixedWidth(600)
+
+        # show the window
+        self.show()
+
+    def callback(self):
+        if not self.directoryChooser.path:
+            QMessageBox.critical(self, "Error", 'Kein gültiger Zielordner ausgewählt.')
+            return
+
+        for key, field in self.text_fields.items():
+            self.data[key] = field.text()
+
+        for key, field in self.layer_fields.items():
+            self.data[key] = field.currentLayer()
+        self.data.destination = self.directoryChooser.path
+
+        self.on_accept(self.data)
+        self.accept()
+
+    '''
+    Determine which layers do NOT conform to the given fields and renderer
+    specification. If the layer is not optional and none conforms to the
+    specifications, display an error.
+    '''
+    @staticmethod
+    def get_exceptions(required_fields, renderer, optional):
+        def disallowed(layer):
+            if layer.type() != QgsMapLayer.VectorLayer:
+                return True
+
+            if renderer and layer.renderer().type() != renderer:
+                return True
+
+            fields = layer.fields().names()
+            for field in required_fields:
+                if field not in fields:
+                    return True
+            return False
+        layers = list(QgsProject.instance().mapLayers().values())
+        filtered = list(filter(disallowed, layers))
+
+        if not optional and len(layers) == len(filtered):
+            required = ', '.join(['"' + f + '"' for f in required_fields])
+            r = 'Renderer "' + renderer + '" und' if renderer else ''
+            raise RuntimeError(f'Kein Layer mit {r} den folgenden Attributfeldern gefunden: ' + required + '.')
+
+        return filtered
+
+'''
+Unified way to store data in a table and export it to LaTeX code or to an Excel
+file. Tuples as cell entries indicate a quantity together with a unit. Example:
+
+# Create table with blue table head:
+my_table = Table()
+my_table.add_row(['Name', 'Alter', ('Gewicht', '')], Table.Highlight.PRIMARY)
+
+# Fill the table
+my_table.add_row(['Andreas', 31, (80, 'kg')])
+my_table.add_row(['Berta', 56, (61, 'kg')])
+
+# Convert the table to LaTeX with column alignment left, right, right and LaTeX
+# command to handle the color.
+my_table.to_latex('lrr', 'coloredbullet')
+
+# Convert the table to Excel with column widths 20, 5, 5, 2 (for the 'kg' column)
+my_table.to_xlsx(handle_to_xlsx_file, [20, 5, 5, 2])
+'''
 class Table:
     class Highlight(Enum):
         NONE = 0
         PRIMARY = 1
         SECONDARY = 2
+
+    offset = 0
 
     def __init__(self):
         self.row_highlight_primary = []
@@ -26,6 +297,9 @@ class Table:
         self.rows = []
         self.row_colors = {}
 
+    '''
+    Convert all cells containing a number x to the tuple (x, unit)
+    '''
     def numbers_to_unit(self, unit):
         for row in self.rows:
             for i in range(len(row)):
@@ -35,22 +309,33 @@ class Table:
     def set_row_color(self, i, c):
         self.row_colors[i] = c
 
-    def add_row(self, row, highlight=0):
+    '''
+    Add a row to the table. highlight may be
+    * Table.Highlight.NONE: No highlighting.
+    * Table.Highlight.PRIMARY: For table headings.
+    * Table.Highlight.SECONDARY: For special intermediate columns.
+    * An instance of QColor: The row will be decorated with the corresponding
+      color.
+    * A tuple (s, t): In the LaTeX export, the row will be decorated with s. In
+      the Excel export, the row will be decorated with t.
+    '''
+    def add_row(self, row, highlight=Highlight.NONE):
         if highlight == Table.Highlight.PRIMARY:
             self.row_highlight_primary.append(len(self.rows))
         elif highlight == Table.Highlight.SECONDARY:
             self.row_highlight_secondary.append(len(self.rows))
-        elif isinstance(highlight, QColor):
+        elif isinstance(highlight, QColor) or isinstance(highlight, tuple):
             self.row_colors[len(self.rows)] = highlight
         self.rows.append(row)
-    
+
     def set_row(self, i, row):
         self.rows[i] = row
 
     def set_cell(self, i, j, value):
         if i < len(self.rows) and j < len(self.rows[i]):
             self.rows[i][j] = value
-    
+
+    @staticmethod
     def pad_and_add_units(row):
         result = []
         for x in row:
@@ -69,24 +354,31 @@ class Table:
     def to_latex(self, colspec, color_command):
         primary = ','.join([str(i + 1) for i in self.row_highlight_primary])
         secondary = ','.join([str(i + 1) for i in self.row_highlight_secondary])
-        result = '\\begin{tblr}{width=\\textwidth,colspec={' + colspec + '},row{'
-        result += primary + '}={bg=dnpblue,fg=white,font=\\bfseries},row{'
-        result += secondary + '}={font=\\bfseries,bg=dnplightblue,fg=black}}'
+        result = '\\begin{tblr}{width=\\textwidth,colspec={' + colspec + '}'
+        if len(primary) > 0:
+            result += ',row{' + primary + '}={3.5ex,f,bg=dnpblue,fg=white,font=\\bfseries}'
+        if len(secondary) > 0:
+            result += ',row{' + secondary + '}={3.5ex,f,font=\\bfseries,bg=dnplightblue,fg=black}'
+        result += '}'
 
         for (i, row) in enumerate(self.rows):
             result += '\n    '
             if i in self.row_colors:
                 color = self.row_colors[i]
-                result += f'\\{color_command}{{{color_to_tikz(color)}}} '
-            
+                if isinstance(color, QColor):
+                    result += f'\\{color_command}{{{color_to_tikz(color)}}} '
+                elif isinstance(color, tuple):
+                    result += color[0]
+
             result += ' & '
             result += Table.pad_and_add_units(row)
             result += ' \\\\'
-        
+
         result += '\n\\end{tblr}'
-        
+
         return result
 
+    @staticmethod
     def add_units(row):
         result = []
         for x in row:
@@ -101,7 +393,9 @@ class Table:
                 result.append(x)
         return result
 
-    def to_xlsx(self, workbook, column_widths=[], worksheet=None, offset=0):
+    def to_xlsx(self, workbook, column_widths=[], worksheet=None):
+        offset = Table.offset
+
         if not worksheet:
             worksheet = workbook.add_worksheet()
 
@@ -131,15 +425,21 @@ class Table:
                 fmt = secondary
             if i in self.row_highlight_primary:
                 fmt = primary
-            
+
             if i in self.row_colors:
-                color_fmt = workbook.add_format()
-                color_fmt.set_bg_color(self.row_colors[i].name())
-                worksheet.write(i + offset, 0, '', color_fmt)
+                color = self.row_colors[i]
+                if isinstance(color, QColor):
+                    color_fmt = workbook.add_format()
+                    color_fmt.set_bg_color(self.row_colors[i].name())
+                    worksheet.write(i + offset, 0, '', color_fmt)
+                elif isinstance(color, tuple):
+                    worksheet.write(i + offset, 0, color[1], fmt)
             else:
                 worksheet.write(i + offset, 0, '', fmt)
 
             worksheet.write_row(i + offset, 1, Table.add_units(row), fmt)
+
+        Table.offset += len(self.rows) + 1
 
 
 class SymbologyCategory:
@@ -148,7 +448,8 @@ class SymbologyCategory:
         self.color = color
         self.label = label
         self.value = value
-    
+
+    @staticmethod
     def extract_symbology_categories(layer, field, columns):
         result = []
         for c in layer.renderer().categories():
@@ -162,7 +463,7 @@ class SymbologyCategory:
             condition = f'"{field}" = \'{token}\''
             value = [GeneratePresentation.filtered_column_sum(layer, condition, column) for column in columns]
             result.append(SymbologyCategory(token, color, label, value))
-        
+
         return result
 
 
@@ -209,7 +510,6 @@ class RectangleMapTool(QgsMapTool):
         if startPoint.x() == endPoint.x() or startPoint.y() == endPoint.y():
             return
 
-
         point1 = QgsPointXY(startPoint.x(), startPoint.y())
         point2 = QgsPointXY(startPoint.x(), endPoint.y())
         point3 = QgsPointXY(endPoint.x(), endPoint.y())
@@ -228,7 +528,6 @@ class RectangleMapTool(QgsMapTool):
             self.startPoint.y() == self.endPoint.y()):
             return None
         return QgsRectangle(self.startPoint, self.endPoint)
-
 
     def deactivate(self):
         QgsMapTool.deactivate(self)
@@ -251,21 +550,25 @@ class GeneratePresentation:
 
         menu = QMenu()
 
-        init_template_action = QAction(presIcon, 'Präsentation zu Adressen und Trenches erzeugen', menu)
-        init_template_action.triggered.connect(self.attempt_instantiate_address_trench_template)
-        menu.addAction(init_template_action)
+        self.trenches_action = QAction(presIcon, 'Präsentation zu Adressen und Trenches erzeugen', menu)
+        self.trenches_action.triggered.connect(self.attempt(self.trenches_dialog))
+        menu.addAction(self.trenches_action)
+        self.iface.registerMainWindowAction(self.trenches_action, 'Ctrl+Alt+U')
 
-        surfaces_action = QAction(presIcon, 'Präsentation zu Oberflächenanalyse erzeugen', menu)
-        surfaces_action.triggered.connect(self.attempt_instantiate_surface_template)
-        menu.addAction(surfaces_action)
+        self.surfaces_action = QAction(presIcon, 'Präsentation zu Oberflächenanalyse erzeugen', menu)
+        self.surfaces_action.triggered.connect(self.attempt(self.surfaces_dialog))
+        menu.addAction(self.surfaces_action)
+        self.iface.registerMainWindowAction(self.surfaces_action, 'Ctrl+Alt+O')
 
-        make_pic_action = QAction(cameraIcon, 'Bild mit Polygonmaßen', menu)
-        make_pic_action.triggered.connect(self.attempt_make_pic_user)
-        menu.addAction(make_pic_action)
+        self.make_pic_action = QAction(cameraIcon, 'Bild mit Polygonmaßen', menu)
+        self.make_pic_action.triggered.connect(self.attempt(self.make_pic_user))
+        menu.addAction(self.make_pic_action)
+        self.iface.registerMainWindowAction(self.make_pic_action, None)
 
-        select_rectangle_action = QAction(rectIcon, 'Bild mit benutzerdefinierten Maßen', menu)
-        select_rectangle_action.triggered.connect(self.select_rectangle)
-        menu.addAction(select_rectangle_action)
+        self.select_rectangle_action = QAction(rectIcon, 'Bild mit benutzerdefinierten Maßen', menu)
+        self.select_rectangle_action.triggered.connect(self.select_rectangle)
+        menu.addAction(self.select_rectangle_action)
+        self.iface.registerMainWindowAction(self.select_rectangle_action, None)
 
         toolButton = QToolButton()
         toolButton.setMenu(menu)
@@ -277,34 +580,62 @@ class GeneratePresentation:
     def unload(self):
         self.iface.removeToolBarIcon(self.tool_action)
         del self.tool_action
-    
+        self.iface.unregisterMainWindowAction(self.trenches_action)
+        del self.trenches_action
+        self.iface.unregisterMainWindowAction(self.surfaces_action)
+        del self.surfaces_action
+        self.iface.unregisterMainWindowAction(self.make_pic_action)
+        del self.make_pic_action
+        self.iface.unregisterMainWindowAction(self.select_rectangle_action)
+        del self.select_rectangle_action
+
+    def attempt(self, fn):
+        def inner(*args):
+            try:
+                fn(*args)
+            except Exception as e:
+                self.iface.messageBar().clearWidgets()
+                self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
+        return inner
+
     def select_rectangle(self):
-        rectangleTool = RectangleMapTool(self.iface.mapCanvas(), self.attempt_make_pic_user)
+        rectangleTool = RectangleMapTool(self.iface.mapCanvas(), self.make_pic_user)
         self.iface.mapCanvas().setMapTool(rectangleTool)
-    
+
     def init_progress_bar(self, maximum):
         message_bar = self.iface.messageBar()
         message_bar.clearWidgets()
-        progressMessageBar = message_bar.createMessage("Preparing presentation ...")
+        progressMessageBar = message_bar.createMessage("Präsentation wird generiert ...")
         self.progress = QProgressBar()
         self.progress.setMaximum(maximum)
         self.progress.setAlignment(Qt.AlignLeft|Qt.AlignVCenter)
         progressMessageBar.layout().addWidget(self.progress)
         message_bar.pushWidget(progressMessageBar, Qgis.Info)
 
+    def print_error(self, e):
+        self.iface.messageBar().clearWidgets()
+        self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
+
+    def set_progress(self, value):
+        if not self.progress:
+            return
+        self.progress.setValue(value)
+
     def increment_progess(self, increment=1):
         if not self.progress:
             return
         self.progress.setValue(self.progress.value() + increment)
 
+    @staticmethod
     def require_layer_gracious(key):
         layers = QgsProject.instance().mapLayers()
         for layer in layers.values():
             if key in layer.name():
                 return layer
-        
+
         return None
 
+    @staticmethod
     def require_layer(key):
         layers = QgsProject.instance().mapLayers()
         result = None
@@ -314,7 +645,7 @@ class GeneratePresentation:
                     raise RuntimeError('Multiple layers containing the key "' + key + '" found! Make sure that there is only one.')
                 else:
                     result = layer
-        
+
         if not result:
             raise RuntimeError('No layer containing the key "' + key + '" found!')
 
@@ -324,6 +655,7 @@ class GeneratePresentation:
         source = os.path.join(self.dir_path, "template", subfolder)
         shutil.copytree(source, destination, dirs_exist_ok=True)
 
+    @staticmethod
     def add_rule(root_rule, expression, color, stroke_color = None, width = None):
         rule = root_rule.children()[0].clone()
         rule.setFilterExpression(expression)
@@ -340,6 +672,7 @@ class GeneratePresentation:
 
         root_rule.appendChild(rule)
 
+    @staticmethod
     def style_layer(layer, rules):
         layer_ = layer.clone()
         symbol = QgsSymbol.defaultSymbol(layer_.geometryType())
@@ -360,6 +693,9 @@ class GeneratePresentation:
             default_file, "Portable Document Format (*.pdf)"
         )
 
+        if not extent:
+            extent = self.calculate_extent([self.iface.activeLayer().boundingBoxOfSelected()])
+
         if destination and destination[0]:
             self.make_pic_pdf(self.iface.mapCanvas().layers(), destination[0], extent)
             self.iface.messageBar().pushMessage(
@@ -368,13 +704,6 @@ class GeneratePresentation:
                 level=Qgis.MessageLevel.Success,
                 duration=15
             )
-
-    def attempt_make_pic_user(self, rect=None):
-        try:
-            self.make_pic_user(rect)
-        except Exception as e:
-            self.iface.messageBar().clearWidgets()
-            self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
 
     def make_pic_pdf(self, layers, destination, extent=None, zoom_factor=4):
         project = QgsProject.instance()
@@ -388,11 +717,7 @@ class GeneratePresentation:
         pc.pages()[0].setPageSize(size)
 
         if not extent:
-            addresses = GeneratePresentation.require_layer_gracious("Adressen")
-            trenches = GeneratePresentation.require_layer_gracious("Trenches")
-            oberflaechen = GeneratePresentation.require_layer_gracious("Oberflächenanalyse")
-            references = [l.extent() for l in filter(None, [addresses, trenches, oberflaechen])]
-            extent = self.calculate_extent(references)
+            extent = self.calculate_extent()
 
         map = QgsLayoutItemMap(layout)
         map.setRect(0, 0, width, height)
@@ -426,13 +751,26 @@ class GeneratePresentation:
         # Start the rendering
         render.start()
 
+    @staticmethod
+    def features_within_selection(layer, selection):
+        ids = set()
+        for polygon in selection:
+            request = QgsFeatureRequest().setDistanceWithin(polygon.geometry(), 0).setFlags(QgsFeatureRequest.NoGeometry).setSubsetOfAttributes([])
+            ids.update([f.id() for f in layer.getFeatures(request)])
+        copy = layer.materialize(QgsFeatureRequest().setFilterFids(list(ids)))
+        copy.setRenderer(layer.renderer().clone())
+        return copy
+
+    @staticmethod
     def filtered_column_sum(layer, condition, column):
         values = QgsVectorLayerUtils.getValues(layer, f'CASE WHEN {condition} THEN {column} ELSE 0 END')[0]
         return sum([x if x else 0 for x in values])
 
+    @staticmethod
     def filtered_length_sum(layer, condition):
         return math.ceil(GeneratePresentation.filtered_column_sum(layer, condition, '$length'))
 
+    @staticmethod
     def calculate_address_statistics(layer, destination):
         columns = ['1', '"Total Kunde"', '"Total DNP"', '1']
         categories = SymbologyCategory.extract_symbology_categories(layer, 'Pruefung', columns)
@@ -440,7 +778,7 @@ class GeneratePresentation:
         special_tokens = ['n', 'o']
         normal_categories = list(filter(lambda c: c.token not in special_tokens, categories))
         special_categories = list(filter(lambda c: c.token in special_tokens, categories))
-        
+
         table = Table()
         table.add_row([
             'Adresskulisse', '', '', '', ''
@@ -452,7 +790,7 @@ class GeneratePresentation:
         for c in normal_categories:
             c.value[3] = c.value[2] - c.value[1]
             table.add_row([c.label] + c.value, c.color)
-        
+
         totalResult = []
         for column in range(len(columns)):
             totalResult.append(sum([c.value[column] for c in normal_categories]))
@@ -481,9 +819,10 @@ class GeneratePresentation:
         table.to_xlsx(workbook, [2, 25, 15, 15, 15, 15])
         workbook.close()
 
+    @staticmethod
     def calculate_trench_lengths(layer, destination):
         conditions = ['"Belag" = \'a\'', '"Belag" = \'t\'', '"Belag" = \'g\'', '"Belag" = \'m\'',  '"Belag" = \'k\'']
-        columns = ['true', '"In_Strasse"', '"Handschachtung"', '"Privatweg"']
+        columns = ['1', '0', '"In_Strasse"', '"Handschachtung"', '"Privatweg"']
 
         result = []
         for condition in conditions:
@@ -491,22 +830,20 @@ class GeneratePresentation:
             for column in columns:
                 row.append(GeneratePresentation.filtered_length_sum(layer, f'{condition} and {column}'))
             result.append(row)
-        
+
         offener_tiefbau = [sum([row[col] for row in result]) for col in range(len(columns))]
         rohrpressung = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'r\'')
         rohrpressung_privat = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'r\' and "Privatweg"')
         spuelbohrung = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'h\'')
         spuelbohrung_privat = GeneratePresentation.filtered_length_sum(layer, '"Belag" = \'c\' and "Verfahren" = \'h\' and "Privatweg"')
-        geschlossener_tiefbau = [rohrpressung + spuelbohrung, None, None, rohrpressung_privat + spuelbohrung_privat]
+        geschlossener_tiefbau = [rohrpressung + spuelbohrung, None, None, None, rohrpressung_privat + spuelbohrung_privat]
 
         special_crossings = Counter(filter(None, QgsVectorLayerUtils.getValues(layer, '"Sonderquerung"')[0]))
-        
+
+        total = offener_tiefbau[0] + geschlossener_tiefbau[0]
         trench_table = Table()
         trench_table.add_row([
-            'Tiefbau gesamt', (offener_tiefbau[0] + geschlossener_tiefbau[0], 'm'), None, None, None
-        ], Table.Highlight.PRIMARY)
-        trench_table.add_row([
-            '', None, ('im Straßenkörper', ''), ('mit Handschachtung', ''), ('in Privatweg', '')
+            'Tiefbau gesamt', total, 0, ('im Straßenkörper', ''), ('mit Handschachtung', ''), ('in Privatweg', '')
         ], Table.Highlight.PRIMARY)
         trench_table.add_row(['Offener Tiefbau'] + offener_tiefbau, Table.Highlight.SECONDARY)
 
@@ -517,33 +854,38 @@ class GeneratePresentation:
         trench_table.add_row(['Kopfsteinpflaster'] + result[4], QColor('#00b0f0'))
 
         trench_table.add_row(['Geschlossener Tiefbau'] + geschlossener_tiefbau, Table.Highlight.SECONDARY)
-        trench_table.add_row(['Rohrpressung', rohrpressung, None, None, rohrpressung_privat], QColor('#ffba0b'))
-        trench_table.add_row(['Spülbohrung',  spuelbohrung, None, None, spuelbohrung_privat], QColor('#01ffe1'))
+        trench_table.add_row(['Rohrpressung', rohrpressung, None, None, None, rohrpressung_privat], QColor('#ffba0b'))
+        trench_table.add_row(['Spülbohrung',  spuelbohrung, None, None, None, spuelbohrung_privat], QColor('#01ffe1'))
+
+        for row in trench_table.rows:
+            row[2] = (round(row[1] * 100 / total), '%')
 
         if special_crossings.total() == 0:
-            trench_table.add_row(['Sonderquerungen', None, None, None, None], Table.Highlight.SECONDARY)
-            trench_table.add_row(['keine', None, None, None, None])
+            trench_table.add_row(['Sonderquerungen', None, None, None, None, None], Table.Highlight.SECONDARY)
+            trench_table.add_row(['keine', None, None, None, None, None])
         else:
-            trench_table.add_row(['Sonderquerungen', (special_crossings.total(), 'St.'), None, None, None], Table.Highlight.SECONDARY)
+            trench_table.add_row(['Sonderquerungen', (special_crossings.total(), 'St.'), None, None, None, None], Table.Highlight.SECONDARY)
             for (crossing, count) in special_crossings.most_common():
-                trench_table.add_row([crossing, (count, 'St.'), None, None, None])
+                trench_table.add_row([crossing, (count, 'St.'), None, None, None, None])
 
         trench_table.numbers_to_unit('m')
 
         with open(os.path.join(destination, "Praesentation", "TrenchStatistik.tex"), "w") as f:
-            f.write('\\newcommand\\trenchStatistik{' + trench_table.to_latex('l@{}lrrrr', 'colorrule') + '}')
+            f.write('\\newcommand\\trenchStatistik{' + trench_table.to_latex('l@{}l|rr|rrr', 'colorrule') + '}')
 
-        for (x, letter) in enumerate(['C', 'E', 'G', 'I']):
-            trench_table.set_cell(2, x + 1, (f'=SUM({letter}4:{letter}8)', 'm'))
-        
-        trench_table.set_cell(8, 1, ('=SUM(C10:C11)', 'm'))
-        trench_table.set_cell(8, 4, ('=SUM(I10:I11)', 'm'))
-        trench_table.set_cell(0, 1, ('=C3+C9', 'm'))
+        trench_table.set_cell(1, 1, (f'=SUM(C3:C7)', 'm'))
+        trench_table.set_cell(1, 3, (f'=SUM(G3:G7)', 'm'))
+        trench_table.set_cell(1, 4, (f'=SUM(I3:I7)', 'm'))
+        trench_table.set_cell(1, 5, (f'=SUM(K3:K7)', 'm'))
+
+        trench_table.set_cell(7, 1, ('=SUM(C9:C10)', 'm'))
+        trench_table.set_cell(7, 5, ('=SUM(K9:K10)', 'm'))
+        trench_table.set_cell(0, 1, ('=C2+C8', 'm'))
         if special_crossings.total() > 0:
-            trench_table.set_cell(11, 1, (f'=SUM(C13:C{12+len(special_crossings)})', 'St.'))
+            trench_table.set_cell(10, 1, (f'=SUM(C12:C{12+len(special_crossings)})', 'St.'))
 
         workbook = xlsxwriter.Workbook(os.path.join(destination, "Trenches.xlsx"))
-        trench_table.to_xlsx(workbook, [5, 25, 15, 2, 15, 2, 15, 2, 15, 2])
+        trench_table.to_xlsx(workbook, [5, 25, 15, 2, 10, 2, 15, 2, 15, 2, 15, 2])
         workbook.close()
 
     def calculate_extent(self, references = []):
@@ -582,13 +924,17 @@ class GeneratePresentation:
         )
         return self.calculate_extent([rect])
 
-    def process_points_of_interest(self, points, layers, extent, destination):
-        max_id = max([point["Punkt_ID"] for point in points])
+    def process_points_of_interest(self, data, layers):
+        points = list(data.poi.getFeatures())
+        extent = data.extent
+        dst = data.destination
+
+        max_id = max([point["Punkt_ID"] for point in points] + [6])
         x_coords = [0] * max_id
         y_coords = [0] * max_id
         for point in points:
             geometry = point.geometry()
-            if geometry.type() != QgsWkbTypes.PointGeometry:
+            if geometry.type() != Qgis.GeometryType.Point:
                 continue
 
             pt = geometry.asPoint()
@@ -597,168 +943,344 @@ class GeneratePresentation:
             y_coords[id-1] = 1 - (pt.y() - extent.yMinimum()) / extent.height()
 
             rect = self.rectangle_around_point(pt)
-            path = os.path.join(destination, "Bilder", f"fotopunkt{id}.pdf")
+            path = os.path.join(dst, "Bilder", f"fotopunkt{id}.pdf")
             self.make_pic_pdf(layers, path, rect, zoom_factor=20)
             self.increment_progess()
 
-        with open(os.path.join(destination, "Praesentation", "PointsOfInterest.tex"), "w") as f:
+        with open(os.path.join(dst, "Praesentation", "PointsOfInterest.tex"), "w") as f:
             x_coords_str = ''.join(['{' + str(x) + '}' for x in x_coords])
             y_coords_str = ''.join(['{' + str(y) + '}' for y in y_coords])
             f.write('\\storedata\\xcoords{' + x_coords_str + '}\n')
             f.write('\\storedata\\ycoords{' + y_coords_str + '}')
 
-    def instantiate_address_trench_template(self):
-        fotopunkt = GeneratePresentation.require_layer('Fotopunkt')
-        trenches = GeneratePresentation.require_layer('Trenches')
-        addresses = GeneratePresentation.require_layer('Adressen')
-        polygons = GeneratePresentation.require_layer('Polygone')
-        osm = GeneratePresentation.require_layer('OpenStreetMap')
+    def get_selection_fields(layer, fields):
+        if layer.type() != QgsMapLayer.VectorLayer:
+            raise RuntimeError('Kein Vektor-Layer ausgewählt.')
 
-        destination = QFileDialog.getExistingDirectory(None, 'Select Destination')
-        if not destination:
-            return
-        self.destination_directory = destination
-        maps_dir = os.path.join(destination, "Karten")
+        features = list(layer.getSelectedFeatures())
+        if len(features) == 0:
+            raise RuntimeError('Keine Polygone im aktiven Layer ausgewählt.')
 
-        points_of_interest = list(fotopunkt.getFeatures())
+        layer_field_names = layer.fields().names()
+        for name in fields:
+            if name not in layer_field_names:
+                raise RuntimeError(f'Die ausgewählten Polygone haben kein Attributfeld "{name}".')
 
-        self.init_progress_bar(11 + len(points_of_interest))
-        self.copy_template("common", destination)
-        self.copy_template("address_and_trenches", destination)
+        return features
+
+    def write_metadata(data):
+        with open(os.path.join(data.destination, "Praesentation", "Commands.tex"), "a") as f:
+            f.write('\n\n% Ort\n\\newcommand{\\Ort}{' + data.ort + '}\n')
+            f.write('\n% Landkreis\n\\newcommand{\\Kreis}{' + data.kreis + '}\n')
+            f.write('\n% Bundesland\n\\newcommand{\\Land}{' + data.land + '}\n')
+            f.write('\n% Abgabedatum\n\\newcommand{\\Abgabedatum}{' + data.datum + '}\n')
+
+    def instantiate_address_trench_template(self, data):
+        Table.offset = 0
+
+        data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
+        data.addresses = GeneratePresentation.features_within_selection(data.addresses, data.selection)
+        data.trenches = GeneratePresentation.features_within_selection(data.trenches, data.selection)
+        data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
+        dst = data.destination
+        self.destination_directory = dst
+        maps_dir = os.path.join(dst, "Karten")
+
+        points_of_interest = list(data.poi.getFeatures())
+        self.init_progress_bar(13 + len(points_of_interest))
+        self.copy_template("common", dst)
+        self.copy_template("address_and_trenches", dst)
         self.increment_progess()
 
-        GeneratePresentation.calculate_address_statistics(addresses, destination)
+        GeneratePresentation.write_metadata(data)
         self.increment_progess()
 
-        GeneratePresentation.calculate_trench_lengths(trenches, destination)
+        GeneratePresentation.calculate_address_statistics(data.addresses, dst)
         self.increment_progess()
 
-        extent = self.calculate_extent([addresses.extent(), trenches.extent()])
-        self.process_points_of_interest(points_of_interest, [addresses, trenches, osm], extent, destination)
+        GeneratePresentation.calculate_trench_lengths(data.trenches, dst)
         self.increment_progess()
 
-        titlepic_path = os.path.join(destination, "Bilder", "titelbild.pdf")
-        self.make_pic_pdf([fotopunkt, addresses, polygons, osm], titlepic_path)
+        self.process_points_of_interest(data, [data.addresses, data.trenches, data.background])
+        self.increment_progess()
+
+        titlepic_path = os.path.join(dst, "Bilder", "titelbild.pdf")
+        self.make_pic_pdf([data.poi, data.addresses, data.polygons, data.background], titlepic_path, data.extent)
         self.increment_progess()
 
         address_check_path = os.path.join(maps_dir, "adresscheck.pdf")
-        self.make_pic_pdf([addresses, polygons, osm], address_check_path)
+        self.make_pic_pdf([data.addresses, data.polygons, data.background], address_check_path, data.extent)
         self.increment_progess()
 
         hp_distribution_path = os.path.join(maps_dir, "hp-verteilung.pdf")
         color1 = QColor(72, 123, 182)
         color2 = QColor(228, 187, 114)
         color3 = QColor(84, 174, 74)
-        hp_distribution = GeneratePresentation.style_layer(addresses, [
+        hp_distribution = GeneratePresentation.style_layer(data.addresses, [
             ('"Total DNP" > 12', color1, color1.darker(), 0.3),
             ('"Total DNP" > 2 and "Total DNP" <= 12', color2, color2.darker(), 0.3),
             ('"Total DNP" <= 2 and "Total DNP" is not null', color3, color3.darker(), 0.3)
         ])
-        self.make_pic_pdf([hp_distribution, polygons, osm], hp_distribution_path)
+        self.make_pic_pdf([hp_distribution, data.polygons, data.background], hp_distribution_path, data.extent)
         self.increment_progess()
 
         trenches_path = os.path.join(maps_dir, "trenches.pdf")
-        self.make_pic_pdf([trenches, polygons, osm], trenches_path)
+        self.make_pic_pdf([data.trenches, data.polygons, data.background], trenches_path, data.extent)
         self.increment_progess()
 
         by_hands_path = os.path.join(maps_dir, "trenches-handschachtung.pdf")
-        by_hands = GeneratePresentation.style_layer(trenches, [
+        by_hands = GeneratePresentation.style_layer(data.trenches, [
             ('"Handschachtung" = false', QColor('black'), None, 0.3),
             ('"Handschachtung" = true', QColor('#54b04a'), None, 0.7)
         ])
-        self.make_pic_pdf([by_hands, polygons, osm], by_hands_path)
+        self.make_pic_pdf([by_hands, data.polygons, data.background], by_hands_path, data.extent)
         self.increment_progess()
 
         by_streets_path = os.path.join(maps_dir, "trenches-strassenkoerper.pdf")
-        by_streets = GeneratePresentation.style_layer(trenches, [
+        by_streets = GeneratePresentation.style_layer(data.trenches, [
             ('"In_Strasse" = false', QColor('black'), None, 0.3),
             ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.7)
         ])
-        self.make_pic_pdf([by_streets, polygons, osm], by_streets_path)
+        self.make_pic_pdf([by_streets, data.polygons, data.background], by_streets_path, data.extent)
         self.increment_progess()
 
         by_private_path = os.path.join(maps_dir, "trenches-privatweg.pdf")
-        by_private = GeneratePresentation.style_layer(trenches, [
+        by_private = GeneratePresentation.style_layer(data.trenches, [
             ('"Privatweg" = false', QColor('black'), None, 0.3),
             ('"Privatweg" = true', QColor('#487bb6'), None, 0.7)
         ])
-        self.make_pic_pdf([by_private, polygons, osm], by_private_path)
+        self.make_pic_pdf([by_private, data.polygons, data.background], by_private_path, data.extent)
+        self.increment_progess()
+
+        self.export_trenches(data)
         self.increment_progess()
 
         self.iface.messageBar().clearWidgets()
         self.iface.messageBar().pushMessage(
             "Success",
-            "Presentation prepared in <a href=\"file:///" + destination + "\">" + destination + "</a>.",
+            "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
             level=Qgis.MessageLevel.Success,
             duration=15
         )
 
-    def attempt_instantiate_address_trench_template(self):
-        try:
-            self.instantiate_address_trench_template()
-        except Exception as e:
-            self.iface.messageBar().clearWidgets()
-            self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
+    def trenches_dialog(self, *args):
+        self.iface.messageBar().clearWidgets()
+        osm = GeneratePresentation.require_layer_gracious('OpenStreetMap')
 
-    def instantiate_surface_template(self):
-        fotopunkt = GeneratePresentation.require_layer('Fotopunkt')
-        oberflaechen = GeneratePresentation.require_layer('Oberflächenanalyse')
-        polygons = GeneratePresentation.require_layer('Polygone')
-        osm = GeneratePresentation.require_layer('OpenStreetMap')
+        layer = self.iface.activeLayer()
+        selection = GeneratePresentation.get_selection_fields(layer, ['Name DNP', 'Kreis', 'Bundesland'])
 
-        destination = QFileDialog.getExistingDirectory(None, 'Select Destination')
-        if not destination:
-            return
-        self.destination_directory = destination
+        ort = selection[0]["Name DNP"]
+        kreis = selection[0]["Kreis"]
+        land = selection[0]["Bundesland"]
+        datum = datetime.today().strftime('%d.%m.%Y')
 
-        points_of_interest = list(fotopunkt.getFeatures())
-        self.init_progress_bar(5 + len(points_of_interest))
-        self.copy_template("common", destination)
-        self.copy_template("surface_classification", destination)
+        data = dotdict()
+        data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
+        data.destination = self.destination_directory
+        data.selection = selection
+        data.title = 'Adressen und Trenches auswerten'
+
+        self.dialog = EvaluationDialog(
+            self.attempt(self.instantiate_address_trench_template),
+            data,
+            {
+                'ort': { 'label': 'Ort:', 'value': ort },
+                'kreis': { 'label': 'Kreis:', 'value': kreis },
+                'land': { 'label': 'Bundesland:', 'value': land },
+                'datum': { 'label': 'Abgabedatum:', 'value': datum },
+            },
+            {
+                'poi': { 'label': 'Fotopunkt:', 'required': ['Punkt_ID'] },
+                'addresses': {
+                    'label': 'Adressen:',
+                    'required': ['Total Kunde', 'Total DNP'],
+                    'renderer': 'categorizedSymbol'
+                },
+                'trenches': {
+                    'label': 'Trenches:',
+                    'required': ['Belag', 'In_Strasse', 'Handschachtung', 'Privatweg', 'Verfahren'],
+                    'renderer': 'RuleRenderer'
+                },
+                'polygons': { 'label': 'Polygone:', 'required': ['Name DNP', 'Kreis', 'Bundesland'] },
+                'background': { 'label': 'Hintergrund:', 'default': osm },
+            }
+        )
+
+    @staticmethod
+    def remove_layer_attributes(layer, field_names):
+        attributes = [layer.fields().indexFromName(name) for name in field_names]
+        attributes = list(filter(lambda i: i > -1, attributes))
+        layer.dataProvider().deleteAttributes(attributes)
+        layer.updateFields()
+
+    @staticmethod
+    def export_layer(layer, name, path, mode='w'):
+        context = QgsProject.instance().transformContext()
+        options = QgsVectorFileWriter.SaveVectorOptions()
+
+        if mode == 'a':
+            # do not overwrite the file but append to it
+            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+
+        options.layerName = name
+        options.fileEncoding = layer.dataProvider().encoding()
+        options.driverName = "GPKG"
+        QgsVectorFileWriter.writeAsVectorFormatV3(layer, path, context, options)
+        doc = QDomDocument();
+        readWriteContext = context = QgsReadWriteContext()
+        layer.exportNamedStyle(doc);
+        gpkg_layer = QgsVectorLayer(f"{path}|layername={name}", name, "ogr")
+        gpkg_layer.importNamedStyle(doc)
+        gpkg_layer.saveStyleToDatabase(name, "", True, "")
+
+    def export_surfaces_gpkg(self, data):
+        path = os.path.join(data.destination, data.ort + '_Oberflächenanalyse_vorschlag.gpkg')
+        GeneratePresentation.export_layer(data.poi, 'Fotopunkt', path)
+
+        # before exporting the surfaces, remove the "noch zu klassifizieren" rule:
+        renderer = data.surfaces.renderer()
+        root = renderer.rootRule()
+        for rule in root.children():
+            if rule.label() == 'noch zu klassifizieren':
+                root.removeChild(rule)
+
+        GeneratePresentation.remove_layer_attributes(data.surfaces, ['Typ', 'Area', 'Polygon'])
+        GeneratePresentation.export_layer(data.surfaces, 'Oberflächen', path, 'a')
+
+    def export_trenches(self, data):
+        path = os.path.join(data.destination, data.ort + '_vorschlag.gpkg')
+        GeneratePresentation.export_layer(data.poi, 'Fotopunkt', path)
+
+        renderer = data.addresses.renderer()
+        for category in renderer.categories():
+            if 'Prüfung ausstehend' in category.label():
+                index = renderer.categoryIndexForLabel(category.label())
+                if index >= 0:
+                    renderer.deleteCategory(index)
+        GeneratePresentation.remove_layer_attributes(data.addresses, ['Polygon ID', 'Nicht sichtbar'])
+        # TODO: There's more to clean up
+        GeneratePresentation.export_layer(data.addresses, 'Adressen', path, 'a')
+
+        renderer = data.trenches.renderer()
+        root = renderer.rootRule()
+        for rule in root.children():
+            if rule.label() == 'Nicht klassifiziert':
+                root.removeChild(rule)
+        GeneratePresentation.export_layer(data.trenches, 'Trenches', path, 'a')
+
+    def surfaces_dialog(self, *args):
+        self.iface.messageBar().clearWidgets()
+        osm = GeneratePresentation.require_layer_gracious('OpenStreetMap')
+
+        layer = self.iface.activeLayer()
+        selection = GeneratePresentation.get_selection_fields(layer, ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'])
+
+        ort = selection[0]["Name DNP"]
+        kreis = selection[0]["Kreis"]
+        land = selection[0]["Bundesland"]
+        datum = datetime.today().strftime('%d.%m.%Y')
+
+        data = dotdict()
+        data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
+        data.destination = self.destination_directory
+        data.selection = selection
+        data.title = 'Oberflächenklassifikation auswerten'
+
+        self.dialog = EvaluationDialog(
+            self.attempt(self.instantiate_surfaces_template),
+            data,
+            {
+                'ort': { 'label': 'Ort:', 'value': ort },
+                'kreis': { 'label': 'Kreis:', 'value': kreis },
+                'land': { 'label': 'Bundesland:', 'value': land },
+                'datum': { 'label': 'Abgabedatum:', 'value': datum },
+            },
+            {
+                'poi': { 'label': 'Fotopunkt:', 'required': ['Punkt_ID'] },
+                'surfaces': {
+                    'label': 'Oberflächenklassifikation:',
+                    'required': ['Belag', 'Typ']
+                },
+                'polygons': { 'label': 'Polygone:', 'required': ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'] },
+                'background': { 'label': 'Hintergrund:', 'default': osm },
+            }
+        )
+
+
+    def surfaces(self):
+        self.init_progress_bar(1)
+
+        q = TaskQueue()
+        q.on_task_complete = self.set_progress
+        q.on_error = self.print_error
+
+        def copy_template(data):
+            self.copy_template("common", data.destination)
+            self.copy_template("surface_classification", data.destination)
+        q.add_task(copy_template)
+        q.add_task(GeneratePresentation.write_metadata)
+
+        def make_title_pic(data, res, rej):
+            titlepic_path = os.path.join(data.destination, "Bilder", "titelbild.pdf")
+            layers = [data.poi, data.surfaces, data.polygons, data.background]
+            self.make_pic_pdf(layers, titlepic_path, data.extent)
+        q.add_task(make_title_pic)
+
+        self.init_progress_bar(q.total_effort)
+
+    def instantiate_surfaces_template(self, data):
+        Table.offset = 0
+
+        data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
+        data.surfaces = GeneratePresentation.features_within_selection(data.surfaces, data.selection)
+        data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
+
+        dst = data.destination
+        self.destination_directory = dst
+
+        points_of_interest = list(data.poi.getFeatures())
+        self.init_progress_bar(7 + len(points_of_interest))
+        self.copy_template("common", dst)
+        self.copy_template("surface_classification", dst)
         self.increment_progess()
 
-        GeneratePresentation.calculate_surface_statistics(oberflaechen, destination)
+        GeneratePresentation.write_metadata(data)
         self.increment_progess()
 
-        extent = self.calculate_extent([oberflaechen.extent()])
-        self.process_points_of_interest(points_of_interest, [oberflaechen, osm], extent, destination)
+        GeneratePresentation.calculate_surface_statistics(data)
         self.increment_progess()
 
-        titlepic_path = os.path.join(destination, "Bilder", "titelbild.pdf")
-        self.make_pic_pdf([fotopunkt, oberflaechen, polygons, osm], titlepic_path)
+        self.process_points_of_interest(data, [data.surfaces, data.background])
         self.increment_progess()
 
-        map_path = os.path.join(destination, "Karten", "karte.pdf")
-        self.make_pic_pdf([oberflaechen, polygons, osm], map_path)
+        titlepic_path = os.path.join(dst, "Bilder", "titelbild.pdf")
+        self.make_pic_pdf([data.poi, data.surfaces, data.polygons, data.background], titlepic_path, data.extent)
+        self.increment_progess()
+
+        map_path = os.path.join(dst, "Karten", "karte.pdf")
+        self.make_pic_pdf([data.surfaces, data.polygons, data.background], map_path, data.extent)
+        self.increment_progess()
+
+        self.export_surfaces_gpkg(data)
         self.increment_progess()
 
         self.iface.messageBar().clearWidgets()
         self.iface.messageBar().pushMessage(
             "Success",
-            "Presentation prepared in <a href=\"file:///" + destination + "\">" + destination + "</a>.",
+            "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
             level=Qgis.MessageLevel.Success,
             duration=15
         )
 
-    def attempt_instantiate_surface_template(self):
-        try:
-            self.instantiate_surface_template()
-        except Exception as e:
-            self.iface.messageBar().clearWidgets()
-            self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
+    def calculate_surface_statistics(data):
+        layer = data.surfaces
+        area_to_length = '$area / (CASE WHEN "Typ" = \'b\' THEN 1.281 ELSE 5.787 END)'
 
-    def calculate_surface_statistics(layer, destination):
-        categories = SymbologyCategory.extract_symbology_categories(
-            layer,
-            'Belag',
-            ['$area / (CASE WHEN "Typ" = \'b\' THEN 1.281 ELSE 5.787 END)', '1']
-        )
-        cats = {}
-        for c in categories:
-            cats[c.token] = c
-        
         class CategoryGroup:
-            def __init__(self, title, categories=[]):
+            surface_types = []
+
+            def __init__(self, title):
                 self.table = Table()
                 self.total_meters = 0
                 self.total_numbers = 0
@@ -768,53 +1290,73 @@ class GeneratePresentation:
                     Table.Highlight.PRIMARY
                 )
 
-                for c in categories:
-                    self.add_category(c)
-            
-            def add_category(self, c):
-                value = c.value[0]
-                self.total_meters += value
-                self.table.add_row([c.label, value, 0], c.color)
-            
+            def add_surface_type(self, token, label, color):
+                meters = GeneratePresentation.filtered_column_sum(layer, f'"Belag" = \'{token}\'', area_to_length)
+                meters = round(meters)
+                self.total_meters += meters
+
+                color = color.lighter() # create a pseudo-transparency effect
+                self.table.add_row([label, meters, None], color)
+                CategoryGroup.surface_types.append((label, color))
+
             def add_total(self, label='Gesamt'):
-                for row in self.table.rows[1:]:
-                    row[2] = row[1] * 100 / self.total_meters
+                if self.total_meters > 0:
+                    for row in self.table.rows[1:]:
+                        row[2] = round(row[1] * 100 / self.total_meters)
 
                 self.table.add_row(
                     [label, self.total_meters, 100],
                     Table.Highlight.SECONDARY
                 )
                 return self.total_meters
-            
+
             def cleanup(self):
                 for row in self.table.rows:
                     if isinstance(row[1], int) or isinstance(row[1], float):
-                        row[1] = (round(row[1]), 'm')
+                        row[1] = (row[1], 'm')
                     if isinstance(row[2], int) or isinstance(row[2], float):
-                        row[2] = (round(row[2]), '%')
-            
+                        row[2] = (row[2], '%')
+
             def to_latex(self):
                 colspec = 'l@{}X[l]rr'
                 return self.table.to_latex(colspec, 'colorsquare')
 
-        street_types = ['a', 't', 'g', 'v', 'm', 'n']
-        street_categories = [cats[token] for token in street_types]
-        sidewalk = CategoryGroup('Oberflächen Bürgersteig', street_categories)
+        sidewalk = CategoryGroup('Oberflächen Bürgersteig')
+        sidewalk.add_surface_type('a', 'Asphalt', QColor('#fa182a'))
+        sidewalk.add_surface_type('b', 'Betonplatten', QColor('#90000c'))
+        sidewalk.add_surface_type('t', 'Pflaster', QColor('#100bb3'))
+        sidewalk.add_surface_type('g', 'Unbefestigt', QColor('#28c028'))
+        sidewalk.add_surface_type('v', 'Verdichtet/Schotter', QColor('#066c06'))
+        sidewalk.add_surface_type('m', 'Kopfsteinpflaster', QColor('#ff7f00'))
+        sidewalk.add_surface_type('n', 'kein Bürgersteig', QColor('#959595'))
         sidewalk_total = sidewalk.add_total()
         sidewalk.cleanup()
 
-        street_types = ['sa', 'st', 'sg', 'sm', 'sn']
-        street_categories = [cats[token] for token in street_types]
-        street = CategoryGroup('Oberflächen Straße', street_categories)
+        street = CategoryGroup('Oberflächen Straße')
+        street.add_surface_type('sa', 'Asphaltierte Straße', QColor('#ebd407'))
+        street.add_surface_type('sb', 'Straße mit Betonplatten', QColor('#948306'))
+        street.add_surface_type('st', 'Gepflasterte Straße', QColor('#2fffee'))
+        street.add_surface_type('sg', 'Unbefestigte Straße', QColor('#becf50'))
+        street.add_surface_type('sm', 'Straße mit Kopfsteinpflaster', QColor('#87650f'))
         street_total = street.add_total()
+        polygons_total = round(sum([f['Strassenmeter'] for f in data.selection]))
+        street.table.add_row(['nicht BIS-geeignet', polygons_total - street_total, None], ('$\\times$', '✖'))
         street.cleanup()
 
-        special_types = ['x', 'sx']
-        special_categories = [cats[token] for token in special_types]
-        special = CategoryGroup('Sonderquerungen', special_categories)
-        special.add_total()
+        special = CategoryGroup('Sonderpositionen')
+        handschachtung = GeneratePresentation.filtered_column_sum(
+                layer, '"Handschachtung"', area_to_length)
+        special.table.add_row(['Handschachtung', round(handschachtung), None], ('\\hatchedsquare', '▨'))
+        traglast = GeneratePresentation.filtered_column_sum(
+                layer, '"Typ" = \'b\' AND "Belag" LIKE \'s%\'', area_to_length)
+        special.table.add_row(['Bürgersteig mit besonderer Traglastanforderung', round(traglast), None])
         special.cleanup()
-        number_special = cats['sx'].value[1]
+
+        number_special = GeneratePresentation.filtered_column_sum(layer, '"Belag" = \'sx\'', '1')
+        special_crossing = CategoryGroup(f'Sonderquerungen ({number_special} St.)')
+        special_crossing.add_surface_type('x', 'Sonderquerung', QColor('#9a50cf'))
+        special_crossing.add_surface_type('sx', 'Sonderquerung Straße', QColor('#8300d4'))
+        special_crossing.cleanup()
 
         summary = CategoryGroup('Gesamtoberfläche')
         summary.table.add_row(['Bürgersteig', sidewalk_total, 0])
@@ -823,21 +1365,41 @@ class GeneratePresentation:
         summary.add_total()
         summary.cleanup()
 
-        with open(os.path.join(destination, "Praesentation", "OberflaechenStatistik.tex"), "w") as f:
+        with open(os.path.join(data.destination, "Praesentation", "OberflaechenStatistik.tex"), "w") as f:
             f.write('\\newcommand\\surfacetypes{')
-            for c in categories:
-                f.write('\\item[\\colorsquare{' + color_to_tikz(c.color) + '}] ' + c.label + '\n')
+            for (label, color) in CategoryGroup.surface_types:
+                f.write('\\item[\\colorsquare{' + color_to_tikz(color) + '}] ' + label + '\n')
+            f.write('\\item[\\hatchedsquare] Handschachtung \n')
             f.write('}\n')
 
             f.write('\\newcommand\\oberflaechenBuergersteig{' + sidewalk.to_latex() + '}\n')
             f.write('\\newcommand\\oberflaechenStrasse{' + street.to_latex() + '}\n')
-            f.write('\\newcommand\\oberflaechenSonderquerung{' + special.to_latex() + '}\n')
+            f.write('\\newcommand\\oberflaechenSonderposition{' + special.to_latex() + '}\n')
+            f.write('\\newcommand\\oberflaechenSonderquerung{' + special_crossing.to_latex() + '}\n')
             f.write('\\newcommand\\oberflaechenGesamt{' + summary.to_latex() + '}\n')
 
-        workbook = xlsxwriter.Workbook(os.path.join(destination, "Oberflaechenanalyse.xlsx"))
+            per_meter = 0.21
+            total_price = polygons_total * per_meter
+            f.write('\n\\newcommand\\preisliste{')
+            f.write(
+                '\\item[$\\bullet$] Analysierte Straßenmeter mit einem Preis von ${}~\\text{{\\euro}}$ pro Meter\n'.format(per_meter)
+            )
+            f.write(
+                '\\item[$\\bullet$] Kosten für \\Ort: ${}~\\text{{m}} \\times {}~\\text{{\\euro{{}} pro m}} = {}~\\text{{\\euro}}$\n'.format(polygons_total, per_meter, total_price)
+            )
+            f.write('\\begin{itemize}\n')
+            for polygon in data.selection:
+                f.write('   \\item[$\\bullet$] \Ort{} -- ' + polygon['Name DNP'] + ': ' + str(round(polygon['Strassenmeter'])) + '~m\n')
+
+            f.write('\\end{itemize}\n')
+            f.write('%\\item[$\\bullet$] Nicht rechnungsrelevant: $XXX~\\text{m} \\times 0.21~\\text{\\euro{} pro m} = XXX~\\text{\\euro}$\n')
+            f.write('}\n')
+
+        workbook = xlsxwriter.Workbook(os.path.join(data.destination, "Oberflaechenanalyse.xlsx"))
         worksheet = workbook.add_worksheet()
-        sidewalk.table.to_xlsx(workbook, [2, 30, 10, 2, 10, 2, 10], worksheet=worksheet)
-        street.table.to_xlsx(workbook, worksheet=worksheet, offset=9)
-        special.table.to_xlsx(workbook, worksheet=worksheet, offset=17)
-        summary.table.to_xlsx(workbook, worksheet=worksheet, offset=22)
+        sidewalk.table.to_xlsx(workbook, [2, 50, 10, 2, 10, 2, 10], worksheet=worksheet)
+        street.table.to_xlsx(workbook, worksheet=worksheet)
+        special.table.to_xlsx(workbook, worksheet=worksheet)
+        special_crossing.table.to_xlsx(workbook, worksheet=worksheet)
+        summary.table.to_xlsx(workbook, worksheet=worksheet)
         workbook.close()
