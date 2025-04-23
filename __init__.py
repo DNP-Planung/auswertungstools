@@ -24,7 +24,12 @@ def color_to_tikz(c):
 
 class Task:
     def __init__(self, run, effort=1, name=''):
-        self.run = run
+        def callback(data, resolve, reject):
+            try:
+                run(data, resolve, reject)
+            except Exception as e:
+                reject(e)
+        self.run = callback
         self.effort = effort
         self.name = name
 
@@ -71,11 +76,18 @@ class TaskQueue:
         task = Task.synchronous(run, effort, name)
         self.tasks.append(task)
         self.total_effort += effort
+        return task
 
     def add_async_task(self, run, effort=1, name=''):
         task = Task(run, effort, name)
         self.tasks.append(task)
         self.total_effort += effort
+        return task
+
+    def update_effort(self, task, effort):
+        self.total_effort += effort - task.effort
+        task.effort = effort
+
 
     def next(self):
         if self.status == TaskQueue.ABORTED:
@@ -86,7 +98,7 @@ class TaskQueue:
             return
 
         task = self.tasks.pop(0)
-        def callback():
+        def callback(*args):
             self.progress += task.effort
             self.notify()
             self.next()
@@ -542,6 +554,7 @@ class GeneratePresentation:
         self.image_height = 800
         self.destination_directory = os.path.expanduser("~")
         self.dir_path = os.path.dirname(os.path.realpath(__file__))
+        self.progress = None
 
     def initGui(self):
         presIcon = QIcon(os.path.join(self.dir_path, 'file-easel.png'))
@@ -556,7 +569,7 @@ class GeneratePresentation:
         self.iface.registerMainWindowAction(self.trenches_action, 'Ctrl+Alt+U')
 
         self.surfaces_action = QAction(presIcon, 'Präsentation zu Oberflächenanalyse erzeugen', menu)
-        self.surfaces_action.triggered.connect(self.attempt(self.surfaces_dialog))
+        self.surfaces_action.triggered.connect(self.evaluate_surfaces)
         menu.addAction(self.surfaces_action)
         self.iface.registerMainWindowAction(self.surfaces_action, 'Ctrl+Alt+O')
 
@@ -619,7 +632,7 @@ class GeneratePresentation:
     def set_progress(self, value):
         if not self.progress:
             return
-        self.progress.setValue(value)
+        self.progress.setValue(round(value * 100))
 
     def increment_progess(self, increment=1):
         if not self.progress:
@@ -686,6 +699,18 @@ class GeneratePresentation:
         layer_.triggerRepaint()
         return layer_
 
+    @staticmethod
+    def adjust_line_spacing(layer, rule_label):
+        renderer = layer.renderer()
+        root = renderer.rootRule()
+        for rule in root.children():
+            if rule.label() == rule_label:
+                symbol = rule.symbol()
+                layers = symbol.symbolLayers()
+                if len(layers) == 0 or not isinstance(layers[0], QgsLinePatternFillSymbolLayer):
+                    continue
+                layers[0].setDistance(layers[0].distance() * 2)
+
     def make_pic_user(self, extent=None):
         default_file = os.path.join(self.destination_directory, "Karten", "map.pdf")
         destination = QFileDialog.getSaveFileName(
@@ -726,11 +751,6 @@ class GeneratePresentation:
         map.setLayers(layers)
         map.setBackgroundColor(QColor(255, 255, 255, 0))
         layout.addLayoutItem(map)
-
-        # scaleBar = QgsLayoutItemScaleBar(layout)
-        # scaleBar.setLinkedMap(map)
-        # scaleBar.applyDefaultSize()
-        # layout.addLayoutItem(scaleBar)
 
         exporter = QgsLayoutExporter(layout)
         exporter.exportToPdf(destination, QgsLayoutExporter.PdfExportSettings())
@@ -925,7 +945,7 @@ class GeneratePresentation:
         return self.calculate_extent([rect])
 
     def process_points_of_interest(self, data, layers):
-        points = list(data.poi.getFeatures())
+        points = data.points_of_interest
         extent = data.extent
         dst = data.destination
 
@@ -974,6 +994,60 @@ class GeneratePresentation:
             f.write('\n% Landkreis\n\\newcommand{\\Kreis}{' + data.kreis + '}\n')
             f.write('\n% Bundesland\n\\newcommand{\\Land}{' + data.land + '}\n')
             f.write('\n% Abgabedatum\n\\newcommand{\\Abgabedatum}{' + data.datum + '}\n')
+            f.write('\n% Kunde (z.B. GF+ oder FED)\n\\newcommand{\\Kunde}{' + data.kunde + '}\n')
+
+    def evaluate_trenches_(self, *args):
+        self.progress = None
+
+        q = TaskQueue()
+        q.on_task_complete = self.set_progress
+        q.on_error = self.print_error
+
+        q.add_async_task(self.show_surfaces_dialog, name='Show surfaces dialog')
+
+        def copy_template(data):
+            data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
+            data.surfaces = GeneratePresentation.features_within_selection(data.surfaces, data.selection)
+            data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
+
+            q.total_effort += len(list(data.poi.getFeatures()))
+            self.init_progress_bar(q.total_effort)
+
+            self.copy_template("common", data.destination)
+            self.copy_template("surface_classification", data.destination)
+
+        q.add_task(copy_template, name='Copy template')
+        q.add_task(GeneratePresentation.write_metadata, name='Write metadata')
+        q.add_task(GeneratePresentation.calculate_surface_statistics, name='Calculate surface statistics')
+
+        q.add_task(
+            lambda data: self.process_points_of_interest(data, [data.surfaces, data.background]),
+            name='Process points of interest'
+        )
+
+        def make_title_pic(data):
+            titlepic_path = os.path.join(data.destination, "Bilder", "titelbild.pdf")
+            layers = [data.poi, data.surfaces, data.polygons, data.background]
+            self.make_pic_pdf(layers, titlepic_path, data.extent)
+        q.add_task(make_title_pic, name='Make title pic')
+
+        def make_map(data):
+            map_path = os.path.join(data.destination, "Karten", "karte.pdf")
+            self.make_pic_pdf([data.surfaces, data.polygons, data.background], map_path, data.extent)
+        q.add_task(make_map, name='Print map')
+
+        def show_success(data):
+            dst = data.destination
+            self.iface.messageBar().clearWidgets()
+            self.iface.messageBar().pushMessage(
+                "Success",
+                "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
+                level=Qgis.MessageLevel.Success,
+                duration=15
+            )
+        q.add_task(show_success, name='Show success')
+
+        q.start()
 
     def instantiate_address_trench_template(self, data):
         Table.offset = 0
@@ -1089,6 +1163,7 @@ class GeneratePresentation:
                 'kreis': { 'label': 'Kreis:', 'value': kreis },
                 'land': { 'label': 'Bundesland:', 'value': land },
                 'datum': { 'label': 'Abgabedatum:', 'value': datum },
+                'kunde': { 'label': 'Kunde:', 'value': '' },
             },
             {
                 'poi': { 'label': 'Fotopunkt:', 'required': ['Punkt_ID'] },
@@ -1208,26 +1283,44 @@ class GeneratePresentation:
         )
 
 
-    def surfaces(self):
-        self.init_progress_bar(1)
+    def show_surfaces_dialog(self, data, resolve, reject):
+        self.iface.messageBar().clearWidgets()
+        osm = GeneratePresentation.require_layer_gracious('OpenStreetMap')
 
-        q = TaskQueue()
-        q.on_task_complete = self.set_progress
-        q.on_error = self.print_error
+        layer = self.iface.activeLayer()
+        selection = GeneratePresentation.get_selection_fields(layer, ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'])
 
-        def copy_template(data):
-            self.copy_template("common", data.destination)
-            self.copy_template("surface_classification", data.destination)
-        q.add_task(copy_template)
-        q.add_task(GeneratePresentation.write_metadata)
+        ort = selection[0]["Name DNP"]
+        kreis = selection[0]["Kreis"]
+        land = selection[0]["Bundesland"]
+        datum = datetime.today().strftime('%d.%m.%Y')
 
-        def make_title_pic(data, res, rej):
-            titlepic_path = os.path.join(data.destination, "Bilder", "titelbild.pdf")
-            layers = [data.poi, data.surfaces, data.polygons, data.background]
-            self.make_pic_pdf(layers, titlepic_path, data.extent)
-        q.add_task(make_title_pic)
+        data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
+        data.destination = self.destination_directory
+        data.selection = selection
+        data.title = 'Oberflächenklassifikation auswerten'
 
-        self.init_progress_bar(q.total_effort)
+        self.dialog = EvaluationDialog(
+            resolve,
+            data,
+            {
+                'ort': { 'label': 'Ort:', 'value': ort },
+                'kreis': { 'label': 'Kreis:', 'value': kreis },
+                'land': { 'label': 'Bundesland:', 'value': land },
+                'datum': { 'label': 'Abgabedatum:', 'value': datum },
+                'kunde': { 'label': 'Kunde:', 'value': '' },
+                'number_special': { 'label': 'Anzahl Sonderquerungen:', 'value': '0' },
+            },
+            {
+                'poi': { 'label': 'Fotopunkt:', 'required': ['Punkt_ID'] },
+                'surfaces': {
+                    'label': 'Oberflächenklassifikation:',
+                    'required': ['Belag', 'Typ']
+                },
+                'polygons': { 'label': 'Polygone:', 'required': ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'] },
+                'background': { 'label': 'Hintergrund:', 'default': osm },
+            }
+        )
 
     def instantiate_surfaces_template(self, data):
         Table.offset = 0
@@ -1251,6 +1344,8 @@ class GeneratePresentation:
         GeneratePresentation.calculate_surface_statistics(data)
         self.increment_progess()
 
+        GeneratePresentation.adjust_line_spacing(data.surfaces, 'Handschachtung')
+
         self.process_points_of_interest(data, [data.surfaces, data.background])
         self.increment_progess()
 
@@ -1273,6 +1368,7 @@ class GeneratePresentation:
             duration=15
         )
 
+    @staticmethod
     def calculate_surface_statistics(data):
         layer = data.surfaces
         area_to_length = '$area / (CASE WHEN "Typ" = \'b\' THEN 1.281 ELSE 5.787 END)'
@@ -1290,9 +1386,9 @@ class GeneratePresentation:
                     Table.Highlight.PRIMARY
                 )
 
-            def add_surface_type(self, token, label, color):
-                meters = GeneratePresentation.filtered_column_sum(layer, f'"Belag" = \'{token}\'', area_to_length)
-                meters = round(meters)
+            def add_surface_type(self, condition, label, color):
+                meters = GeneratePresentation.filtered_column_sum(layer, condition, area_to_length)
+                meters = math.ceil(meters)
                 self.total_meters += meters
 
                 color = color.lighter() # create a pseudo-transparency effect
@@ -1322,22 +1418,22 @@ class GeneratePresentation:
                 return self.table.to_latex(colspec, 'colorsquare')
 
         sidewalk = CategoryGroup('Oberflächen Bürgersteig')
-        sidewalk.add_surface_type('a', 'Asphalt', QColor('#fa182a'))
-        sidewalk.add_surface_type('b', 'Betonplatten', QColor('#90000c'))
-        sidewalk.add_surface_type('t', 'Pflaster', QColor('#100bb3'))
-        sidewalk.add_surface_type('g', 'Unbefestigt', QColor('#28c028'))
-        sidewalk.add_surface_type('v', 'Verdichtet/Schotter', QColor('#066c06'))
-        sidewalk.add_surface_type('m', 'Kopfsteinpflaster', QColor('#ff7f00'))
-        sidewalk.add_surface_type('n', 'kein Bürgersteig', QColor('#959595'))
+        sidewalk.add_surface_type('"Belag" = \'a\' OR ("Belag" = \'sa\' AND "Typ" = \'b\')', 'Asphalt', QColor('#fa182a'))
+        sidewalk.add_surface_type('"Belag" = \'b\' OR ("Belag" = \'sb\' AND "Typ" = \'b\')', 'Betonplatten', QColor('#90000c'))
+        sidewalk.add_surface_type('"Belag" = \'t\' OR ("Belag" = \'st\' AND "Typ" = \'b\')', 'Pflaster', QColor('#100bb3'))
+        sidewalk.add_surface_type('"Belag" = \'g\' OR ("Belag" = \'sg\' AND "Typ" = \'b\')', 'Unbefestigt', QColor('#28c028'))
+        sidewalk.add_surface_type('"Belag" = \'v\' OR ("Belag" = \'sv\' AND "Typ" = \'b\')', 'Verdichtet/Schotter', QColor('#066c06'))
+        sidewalk.add_surface_type('"Belag" = \'m\' OR ("Belag" = \'sm\' AND "Typ" = \'b\')', 'Kopfsteinpflaster', QColor('#ff7f00'))
+        sidewalk.add_surface_type('"Belag" = \'n\' OR ("Belag" = \'sn\' AND "Typ" = \'b\')', 'kein Bürgersteig', QColor('#959595'))
         sidewalk_total = sidewalk.add_total()
         sidewalk.cleanup()
 
         street = CategoryGroup('Oberflächen Straße')
-        street.add_surface_type('sa', 'Asphaltierte Straße', QColor('#ebd407'))
-        street.add_surface_type('sb', 'Straße mit Betonplatten', QColor('#948306'))
-        street.add_surface_type('st', 'Gepflasterte Straße', QColor('#2fffee'))
-        street.add_surface_type('sg', 'Unbefestigte Straße', QColor('#becf50'))
-        street.add_surface_type('sm', 'Straße mit Kopfsteinpflaster', QColor('#87650f'))
+        street.add_surface_type('"Belag" = \'sa\' AND "Typ" = \'s\'', 'Asphaltierte Straße', QColor('#ebd407'))
+        street.add_surface_type('"Belag" = \'sb\' AND "Typ" = \'s\'', 'Straße mit Betonplatten', QColor('#948306'))
+        street.add_surface_type('"Belag" = \'st\' AND "Typ" = \'s\'', 'Gepflasterte Straße', QColor('#2fffee'))
+        street.add_surface_type('"Belag" = \'sg\' AND "Typ" = \'s\'', 'Unbefestigte Straße', QColor('#becf50'))
+        street.add_surface_type('"Belag" = \'sm\' AND "Typ" = \'s\'', 'Straße mit Kopfsteinpflaster', QColor('#87650f'))
         street_total = street.add_total()
         polygons_total = round(sum([f['Strassenmeter'] for f in data.selection]))
         street.table.add_row(['nicht BIS-geeignet', polygons_total - street_total, None], ('$\\times$', '✖'))
@@ -1352,10 +1448,9 @@ class GeneratePresentation:
         special.table.add_row(['Bürgersteig mit besonderer Traglastanforderung', round(traglast), None])
         special.cleanup()
 
-        number_special = GeneratePresentation.filtered_column_sum(layer, '"Belag" = \'sx\'', '1')
-        special_crossing = CategoryGroup(f'Sonderquerungen ({number_special} St.)')
-        special_crossing.add_surface_type('x', 'Sonderquerung', QColor('#9a50cf'))
-        special_crossing.add_surface_type('sx', 'Sonderquerung Straße', QColor('#8300d4'))
+        special_crossing = CategoryGroup(f'Sonderquerungen ({data.number_special} St.)')
+        special_crossing.add_surface_type('"Belag" = \'x\' OR ("Belag" = \'sx\' AND "Typ" = \'b\')', 'Sonderquerung Bürgersteig', QColor('#9a50cf'))
+        special_crossing.add_surface_type('"Belag" = \'sx\' AND "Typ" = \'s\'', 'Sonderquerung Straße', QColor('#8300d4'))
         special_crossing.cleanup()
 
         summary = CategoryGroup('Gesamtoberfläche')
@@ -1389,12 +1484,13 @@ class GeneratePresentation:
             )
             f.write('\\begin{itemize}\n')
             for polygon in data.selection:
-                f.write('   \\item[$\\bullet$] \Ort{} -- ' + polygon['Name DNP'] + ': ' + str(round(polygon['Strassenmeter'])) + '~m\n')
+                f.write('   \\item[$\\bullet$] \\Ort{} -- ' + polygon['Name DNP'] + ': ' + str(round(polygon['Strassenmeter'])) + '~m\n')
 
             f.write('\\end{itemize}\n')
             f.write('%\\item[$\\bullet$] Nicht rechnungsrelevant: $XXX~\\text{m} \\times 0.21~\\text{\\euro{} pro m} = XXX~\\text{\\euro}$\n')
             f.write('}\n')
 
+        Table.offset = 0
         workbook = xlsxwriter.Workbook(os.path.join(data.destination, "Oberflaechenanalyse.xlsx"))
         worksheet = workbook.add_worksheet()
         sidewalk.table.to_xlsx(workbook, [2, 50, 10, 2, 10, 2, 10], worksheet=worksheet)
@@ -1403,3 +1499,59 @@ class GeneratePresentation:
         special_crossing.table.to_xlsx(workbook, worksheet=worksheet)
         summary.table.to_xlsx(workbook, worksheet=worksheet)
         workbook.close()
+
+    def evaluate_surfaces(self, *args):
+        self.progress = None
+
+        q = TaskQueue()
+        q.on_task_complete = self.set_progress
+        q.on_error = self.print_error
+
+        q.add_async_task(self.show_surfaces_dialog, name='Show surfaces dialog')
+
+        def copy_template(data):
+            self.init_progress_bar(100)
+
+            data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
+            data.surfaces = GeneratePresentation.features_within_selection(data.surfaces, data.selection)
+            data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
+
+            data.points_of_interest = list(data.poi.getFeatures())
+            q.update_effort(poi_task, 1 + len(data.points_of_interest))
+
+            self.destination_directory = data.destination
+            self.copy_template("common", data.destination)
+            self.copy_template("surface_classification", data.destination)
+
+        q.add_task(copy_template, name='Copy template')
+        q.add_task(GeneratePresentation.write_metadata, name='Write metadata')
+        q.add_task(GeneratePresentation.calculate_surface_statistics, name='Calculate surface statistics')
+
+        poi_task = q.add_task(
+            lambda data: self.process_points_of_interest(data, [data.surfaces, data.background]),
+            name='Process points of interest'
+        )
+
+        def make_title_pic(data):
+            titlepic_path = os.path.join(data.destination, "Bilder", "titelbild.pdf")
+            layers = [data.poi, data.surfaces, data.polygons, data.background]
+            self.make_pic_pdf(layers, titlepic_path, data.extent)
+        q.add_task(make_title_pic, name='Make title pic')
+
+        def make_map(data):
+            map_path = os.path.join(data.destination, "Karten", "karte.pdf")
+            self.make_pic_pdf([data.surfaces, data.polygons, data.background], map_path, data.extent)
+        q.add_task(make_map, name='Print map')
+
+        def show_success(data):
+            dst = data.destination
+            self.iface.messageBar().clearWidgets()
+            self.iface.messageBar().pushMessage(
+                "Success",
+                "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
+                level=Qgis.MessageLevel.Success,
+                duration=15
+            )
+        q.add_task(show_success, name='Show success')
+
+        q.start()
