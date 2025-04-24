@@ -28,6 +28,7 @@ class Task:
             try:
                 run(data, resolve, reject)
             except Exception as e:
+                raise e
                 reject(e)
         self.run = callback
         self.effort = effort
@@ -40,6 +41,7 @@ class Task:
                 run(data)
                 resolve()
             except Exception as e:
+                raise e
                 reject(e)
 
         return Task(callback, effort, name)
@@ -564,7 +566,7 @@ class GeneratePresentation:
         menu = QMenu()
 
         self.trenches_action = QAction(presIcon, 'Präsentation zu Adressen und Trenches erzeugen', menu)
-        self.trenches_action.triggered.connect(self.attempt(self.trenches_dialog))
+        self.trenches_action.triggered.connect(self.evaluate_trenches)
         menu.addAction(self.trenches_action)
         self.iface.registerMainWindowAction(self.trenches_action, 'Ctrl+Alt+U')
 
@@ -628,6 +630,16 @@ class GeneratePresentation:
     def print_error(self, e):
         self.iface.messageBar().clearWidgets()
         self.iface.messageBar().pushMessage("Error", str(e), level=Qgis.Critical)
+
+    def show_success(self, data):
+        dst = data.destination
+        self.iface.messageBar().clearWidgets()
+        self.iface.messageBar().pushMessage(
+            "Success",
+            "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
+            level=Qgis.MessageLevel.Success,
+            duration=15
+        )
 
     def set_progress(self, value):
         if not self.progress:
@@ -791,7 +803,9 @@ class GeneratePresentation:
         return math.ceil(GeneratePresentation.filtered_column_sum(layer, condition, '$length'))
 
     @staticmethod
-    def calculate_address_statistics(layer, destination):
+    def calculate_address_statistics(data):
+        layer = data.addresses
+        destination = data.destination
         columns = ['1', '"Total Kunde"', '"Total DNP"', '1']
         categories = SymbologyCategory.extract_symbology_categories(layer, 'Pruefung', columns)
 
@@ -840,7 +854,10 @@ class GeneratePresentation:
         workbook.close()
 
     @staticmethod
-    def calculate_trench_lengths(layer, destination):
+    def calculate_trench_lengths(data):
+        layer = data.trenches
+        destination = data.destination
+
         conditions = ['"Belag" = \'a\'', '"Belag" = \'t\'', '"Belag" = \'g\'', '"Belag" = \'m\'',  '"Belag" = \'k\'']
         columns = ['1', '0', '"In_Strasse"', '"Handschachtung"', '"Privatweg"']
 
@@ -965,7 +982,6 @@ class GeneratePresentation:
             rect = self.rectangle_around_point(pt)
             path = os.path.join(dst, "Bilder", f"fotopunkt{id}.pdf")
             self.make_pic_pdf(layers, path, rect, zoom_factor=20)
-            self.increment_progess()
 
         with open(os.path.join(dst, "Praesentation", "PointsOfInterest.tex"), "w") as f:
             x_coords_str = ''.join(['{' + str(x) + '}' for x in x_coords])
@@ -973,6 +989,7 @@ class GeneratePresentation:
             f.write('\\storedata\\xcoords{' + x_coords_str + '}\n')
             f.write('\\storedata\\ycoords{' + y_coords_str + '}')
 
+    @staticmethod
     def get_selection_fields(layer, fields):
         if layer.type() != QgsMapLayer.VectorLayer:
             raise RuntimeError('Kein Vektor-Layer ausgewählt.')
@@ -996,148 +1013,100 @@ class GeneratePresentation:
             f.write('\n% Abgabedatum\n\\newcommand{\\Abgabedatum}{' + data.datum + '}\n')
             f.write('\n% Kunde (z.B. GF+ oder FED)\n\\newcommand{\\Kunde}{' + data.kunde + '}\n')
 
-    def evaluate_trenches_(self, *args):
+    def evaluate_trenches(self, *args):
         self.progress = None
 
         q = TaskQueue()
         q.on_task_complete = self.set_progress
         q.on_error = self.print_error
 
-        q.add_async_task(self.show_surfaces_dialog, name='Show surfaces dialog')
+        q.add_async_task(self.show_trenches_dialog, name='Show trenches dialog')
 
         def copy_template(data):
+            Table.offset = 0
+            self.init_progress_bar(100)
             data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
-            data.surfaces = GeneratePresentation.features_within_selection(data.surfaces, data.selection)
+            data.addresses = GeneratePresentation.features_within_selection(data.addresses, data.selection)
+            data.trenches = GeneratePresentation.features_within_selection(data.trenches, data.selection)
             data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
 
-            q.total_effort += len(list(data.poi.getFeatures()))
-            self.init_progress_bar(q.total_effort)
+            data.points_of_interest = list(data.poi.getFeatures())
+            q.update_effort(poi_task, 1 + len(data.points_of_interest))
+            data.maps_dir = os.path.join(data.destination, "Karten")
 
+            self.destination_directory = data.destination
             self.copy_template("common", data.destination)
-            self.copy_template("surface_classification", data.destination)
+            self.copy_template("address_and_trenches", data.destination)
 
         q.add_task(copy_template, name='Copy template')
         q.add_task(GeneratePresentation.write_metadata, name='Write metadata')
-        q.add_task(GeneratePresentation.calculate_surface_statistics, name='Calculate surface statistics')
+        q.add_task(GeneratePresentation.calculate_address_statistics, name='Calculate address statistics')
+        q.add_task(GeneratePresentation.calculate_trench_lengths, name='Calculate trench lengths')
 
-        q.add_task(
-            lambda data: self.process_points_of_interest(data, [data.surfaces, data.background]),
+        poi_task = q.add_task(
+            lambda data: self.process_points_of_interest(data, [data.addresses, data.trenches, data.background]),
             name='Process points of interest'
         )
 
         def make_title_pic(data):
             titlepic_path = os.path.join(data.destination, "Bilder", "titelbild.pdf")
-            layers = [data.poi, data.surfaces, data.polygons, data.background]
+            layers = [data.poi, data.addresses, data.polygons, data.background]
             self.make_pic_pdf(layers, titlepic_path, data.extent)
         q.add_task(make_title_pic, name='Make title pic')
 
-        def make_map(data):
-            map_path = os.path.join(data.destination, "Karten", "karte.pdf")
-            self.make_pic_pdf([data.surfaces, data.polygons, data.background], map_path, data.extent)
-        q.add_task(make_map, name='Print map')
+        def make_address_map(data):
+            address_check_path = os.path.join(data.maps_dir, "adresscheck.pdf")
+            self.make_pic_pdf([data.addresses, data.polygons, data.background], address_check_path, data.extent)
+        q.add_task(make_address_map, name='Print address map')
 
-        def show_success(data):
-            dst = data.destination
-            self.iface.messageBar().clearWidgets()
-            self.iface.messageBar().pushMessage(
-                "Success",
-                "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
-                level=Qgis.MessageLevel.Success,
-                duration=15
-            )
-        q.add_task(show_success, name='Show success')
+        def make_hp_distribution(data):
+            hp_distribution_path = os.path.join(data.maps_dir, "hp-verteilung.pdf")
+            color1 = QColor(72, 123, 182)
+            color2 = QColor(228, 187, 114)
+            color3 = QColor(84, 174, 74)
+            hp_distribution = GeneratePresentation.style_layer(data.addresses, [
+                ('"Total DNP" > 12', color1, color1.darker(), 0.3),
+                ('"Total DNP" > 2 and "Total DNP" <= 12', color2, color2.darker(), 0.3),
+                ('"Total DNP" <= 2 and "Total DNP" is not null', color3, color3.darker(), 0.3)
+            ])
+            self.make_pic_pdf([hp_distribution, data.polygons, data.background], hp_distribution_path, data.extent)
+            self.increment_progess()
+        q.add_task(make_hp_distribution, name='Print HP distribution')
+
+        def make_trenches_map(data):
+            trenches_path = os.path.join(data.maps_dir, "trenches.pdf")
+            self.make_pic_pdf([data.trenches, data.polygons, data.background], trenches_path, data.extent)
+        q.add_task(make_trenches_map, name='Print trenches map')
+
+        def make_trench_detail_maps(data):
+            maps_dir = data.maps_dir
+            by_hands_path = os.path.join(maps_dir, "trenches-handschachtung.pdf")
+            by_hands = GeneratePresentation.style_layer(data.trenches, [
+                ('"Handschachtung" = false', QColor('black'), None, 0.3),
+                ('"Handschachtung" = true', QColor('#54b04a'), None, 0.7)
+            ])
+            self.make_pic_pdf([by_hands, data.polygons, data.background], by_hands_path, data.extent)
+
+            by_streets_path = os.path.join(maps_dir, "trenches-strassenkoerper.pdf")
+            by_streets = GeneratePresentation.style_layer(data.trenches, [
+                ('"In_Strasse" = false', QColor('black'), None, 0.3),
+                ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.7)
+            ])
+            self.make_pic_pdf([by_streets, data.polygons, data.background], by_streets_path, data.extent)
+
+            by_private_path = os.path.join(maps_dir, "trenches-privatweg.pdf")
+            by_private = GeneratePresentation.style_layer(data.trenches, [
+                ('"Privatweg" = false', QColor('black'), None, 0.3),
+                ('"Privatweg" = true', QColor('#487bb6'), None, 0.7)
+            ])
+            self.make_pic_pdf([by_private, data.polygons, data.background], by_private_path, data.extent)
+        q.add_task(make_trench_detail_maps, name='Print trenches maps')
+
+        q.add_task(self.show_success, name='Show success')
 
         q.start()
 
-    def instantiate_address_trench_template(self, data):
-        Table.offset = 0
-
-        data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
-        data.addresses = GeneratePresentation.features_within_selection(data.addresses, data.selection)
-        data.trenches = GeneratePresentation.features_within_selection(data.trenches, data.selection)
-        data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
-        dst = data.destination
-        self.destination_directory = dst
-        maps_dir = os.path.join(dst, "Karten")
-
-        points_of_interest = list(data.poi.getFeatures())
-        self.init_progress_bar(13 + len(points_of_interest))
-        self.copy_template("common", dst)
-        self.copy_template("address_and_trenches", dst)
-        self.increment_progess()
-
-        GeneratePresentation.write_metadata(data)
-        self.increment_progess()
-
-        GeneratePresentation.calculate_address_statistics(data.addresses, dst)
-        self.increment_progess()
-
-        GeneratePresentation.calculate_trench_lengths(data.trenches, dst)
-        self.increment_progess()
-
-        self.process_points_of_interest(data, [data.addresses, data.trenches, data.background])
-        self.increment_progess()
-
-        titlepic_path = os.path.join(dst, "Bilder", "titelbild.pdf")
-        self.make_pic_pdf([data.poi, data.addresses, data.polygons, data.background], titlepic_path, data.extent)
-        self.increment_progess()
-
-        address_check_path = os.path.join(maps_dir, "adresscheck.pdf")
-        self.make_pic_pdf([data.addresses, data.polygons, data.background], address_check_path, data.extent)
-        self.increment_progess()
-
-        hp_distribution_path = os.path.join(maps_dir, "hp-verteilung.pdf")
-        color1 = QColor(72, 123, 182)
-        color2 = QColor(228, 187, 114)
-        color3 = QColor(84, 174, 74)
-        hp_distribution = GeneratePresentation.style_layer(data.addresses, [
-            ('"Total DNP" > 12', color1, color1.darker(), 0.3),
-            ('"Total DNP" > 2 and "Total DNP" <= 12', color2, color2.darker(), 0.3),
-            ('"Total DNP" <= 2 and "Total DNP" is not null', color3, color3.darker(), 0.3)
-        ])
-        self.make_pic_pdf([hp_distribution, data.polygons, data.background], hp_distribution_path, data.extent)
-        self.increment_progess()
-
-        trenches_path = os.path.join(maps_dir, "trenches.pdf")
-        self.make_pic_pdf([data.trenches, data.polygons, data.background], trenches_path, data.extent)
-        self.increment_progess()
-
-        by_hands_path = os.path.join(maps_dir, "trenches-handschachtung.pdf")
-        by_hands = GeneratePresentation.style_layer(data.trenches, [
-            ('"Handschachtung" = false', QColor('black'), None, 0.3),
-            ('"Handschachtung" = true', QColor('#54b04a'), None, 0.7)
-        ])
-        self.make_pic_pdf([by_hands, data.polygons, data.background], by_hands_path, data.extent)
-        self.increment_progess()
-
-        by_streets_path = os.path.join(maps_dir, "trenches-strassenkoerper.pdf")
-        by_streets = GeneratePresentation.style_layer(data.trenches, [
-            ('"In_Strasse" = false', QColor('black'), None, 0.3),
-            ('"In_Strasse" = true', QColor('#db1e2a'), None, 0.7)
-        ])
-        self.make_pic_pdf([by_streets, data.polygons, data.background], by_streets_path, data.extent)
-        self.increment_progess()
-
-        by_private_path = os.path.join(maps_dir, "trenches-privatweg.pdf")
-        by_private = GeneratePresentation.style_layer(data.trenches, [
-            ('"Privatweg" = false', QColor('black'), None, 0.3),
-            ('"Privatweg" = true', QColor('#487bb6'), None, 0.7)
-        ])
-        self.make_pic_pdf([by_private, data.polygons, data.background], by_private_path, data.extent)
-        self.increment_progess()
-
-        self.export_trenches(data)
-        self.increment_progess()
-
-        self.iface.messageBar().clearWidgets()
-        self.iface.messageBar().pushMessage(
-            "Success",
-            "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
-            level=Qgis.MessageLevel.Success,
-            duration=15
-        )
-
-    def trenches_dialog(self, *args):
+    def show_trenches_dialog(self, data, resolve, reject):
         self.iface.messageBar().clearWidgets()
         osm = GeneratePresentation.require_layer_gracious('OpenStreetMap')
 
@@ -1149,14 +1118,13 @@ class GeneratePresentation:
         land = selection[0]["Bundesland"]
         datum = datetime.today().strftime('%d.%m.%Y')
 
-        data = dotdict()
         data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
         data.destination = self.destination_directory
         data.selection = selection
         data.title = 'Adressen und Trenches auswerten'
 
         self.dialog = EvaluationDialog(
-            self.attempt(self.instantiate_address_trench_template),
+            resolve,
             data,
             {
                 'ort': { 'label': 'Ort:', 'value': ort },
@@ -1244,44 +1212,6 @@ class GeneratePresentation:
                 root.removeChild(rule)
         GeneratePresentation.export_layer(data.trenches, 'Trenches', path, 'a')
 
-    def surfaces_dialog(self, *args):
-        self.iface.messageBar().clearWidgets()
-        osm = GeneratePresentation.require_layer_gracious('OpenStreetMap')
-
-        layer = self.iface.activeLayer()
-        selection = GeneratePresentation.get_selection_fields(layer, ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'])
-
-        ort = selection[0]["Name DNP"]
-        kreis = selection[0]["Kreis"]
-        land = selection[0]["Bundesland"]
-        datum = datetime.today().strftime('%d.%m.%Y')
-
-        data = dotdict()
-        data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
-        data.destination = self.destination_directory
-        data.selection = selection
-        data.title = 'Oberflächenklassifikation auswerten'
-
-        self.dialog = EvaluationDialog(
-            self.attempt(self.instantiate_surfaces_template),
-            data,
-            {
-                'ort': { 'label': 'Ort:', 'value': ort },
-                'kreis': { 'label': 'Kreis:', 'value': kreis },
-                'land': { 'label': 'Bundesland:', 'value': land },
-                'datum': { 'label': 'Abgabedatum:', 'value': datum },
-            },
-            {
-                'poi': { 'label': 'Fotopunkt:', 'required': ['Punkt_ID'] },
-                'surfaces': {
-                    'label': 'Oberflächenklassifikation:',
-                    'required': ['Belag', 'Typ']
-                },
-                'polygons': { 'label': 'Polygone:', 'required': ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'] },
-                'background': { 'label': 'Hintergrund:', 'default': osm },
-            }
-        )
-
 
     def show_surfaces_dialog(self, data, resolve, reject):
         self.iface.messageBar().clearWidgets()
@@ -1320,52 +1250,6 @@ class GeneratePresentation:
                 'polygons': { 'label': 'Polygone:', 'required': ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'] },
                 'background': { 'label': 'Hintergrund:', 'default': osm },
             }
-        )
-
-    def instantiate_surfaces_template(self, data):
-        Table.offset = 0
-
-        data.poi = GeneratePresentation.features_within_selection(data.poi, data.selection)
-        data.surfaces = GeneratePresentation.features_within_selection(data.surfaces, data.selection)
-        data.polygons = GeneratePresentation.features_within_selection(data.polygons, data.selection)
-
-        dst = data.destination
-        self.destination_directory = dst
-
-        points_of_interest = list(data.poi.getFeatures())
-        self.init_progress_bar(7 + len(points_of_interest))
-        self.copy_template("common", dst)
-        self.copy_template("surface_classification", dst)
-        self.increment_progess()
-
-        GeneratePresentation.write_metadata(data)
-        self.increment_progess()
-
-        GeneratePresentation.calculate_surface_statistics(data)
-        self.increment_progess()
-
-        GeneratePresentation.adjust_line_spacing(data.surfaces, 'Handschachtung')
-
-        self.process_points_of_interest(data, [data.surfaces, data.background])
-        self.increment_progess()
-
-        titlepic_path = os.path.join(dst, "Bilder", "titelbild.pdf")
-        self.make_pic_pdf([data.poi, data.surfaces, data.polygons, data.background], titlepic_path, data.extent)
-        self.increment_progess()
-
-        map_path = os.path.join(dst, "Karten", "karte.pdf")
-        self.make_pic_pdf([data.surfaces, data.polygons, data.background], map_path, data.extent)
-        self.increment_progess()
-
-        self.export_surfaces_gpkg(data)
-        self.increment_progess()
-
-        self.iface.messageBar().clearWidgets()
-        self.iface.messageBar().pushMessage(
-            "Success",
-            "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
-            level=Qgis.MessageLevel.Success,
-            duration=15
         )
 
     @staticmethod
@@ -1540,18 +1424,9 @@ class GeneratePresentation:
 
         def make_map(data):
             map_path = os.path.join(data.destination, "Karten", "karte.pdf")
-            self.make_pic_pdf([data.surfaces, data.polygons, data.background], map_path, data.extent)
+            layers = [data.surfaces, data.polygons, data.background]
+            self.make_pic_pdf(layers, map_path, data.extent)
         q.add_task(make_map, name='Print map')
 
-        def show_success(data):
-            dst = data.destination
-            self.iface.messageBar().clearWidgets()
-            self.iface.messageBar().pushMessage(
-                "Success",
-                "Presentation prepared in <a href=\"file:///" + dst + "\">" + dst + "</a>.",
-                level=Qgis.MessageLevel.Success,
-                duration=15
-            )
-        q.add_task(show_success, name='Show success')
-
+        q.add_task(self.show_success, name='Show success')
         q.start()
