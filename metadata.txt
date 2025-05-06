@@ -1,5 +1,5 @@
 [general]
-name=DNP Auswertungen
+name=DNP Auswertungstools
 description=Tools für die Erstellung von Präsentationen zur Oberflächenanalyse und Adresscheck/Trenches
 about=
 version=0.1
