@@ -8,6 +8,7 @@ from qgis.PyQt.QtXml import QDomDocument
 import os, shutil, re, math
 from os import path as osp
 from . import xlsxwriter
+import glob
 from collections import Counter
 
 import locale
@@ -352,6 +353,8 @@ class EvaluationDialog(QDialog):
 
 def format_number_latex(x):
     if isinstance(x, int) or isinstance(x, float):
+        # round to 2 decimal places
+        x = round(x, 2)
         return '{:_}'.format(x).replace('.', '{,}').replace('_', '.')
     else:
         return str(x)
@@ -1227,7 +1230,7 @@ class GeneratePresentation:
 
         data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
         data.destination = self.destination_directory
-        data.selection = sorted(selection, key=lambda p: p['Strassenmeter'], reverse=True)
+        data.selection = sorted(selection, key=lambda p: p['Strassenmeter'])
         data.title = 'Adressen und Trenches auswerten'
 
         self.dialog = EvaluationDialog(
@@ -1472,7 +1475,13 @@ class GeneratePresentation:
             f.write('\\renewcommand\\oberflaechenGesamt{' + summary.to_latex() + '}\n')
 
         Table.offset = 0
-        workbook = xlsxwriter.Workbook(osp.join(data.destination, "Oberflaechenanalyse.xlsx"))
+        #workbook = xlsxwriter.Workbook(osp.join(data.destination, "*Oberflächenanalyse.xlsx"))
+        path = glob.glob(data.destination + '\\*Oberflächenanalyse.xlsx')
+        if len(path) == 0:
+            path = osp.join(data.destination, "Oberflächenanalyse.xlsx")
+        else:
+            path = path[0]
+        workbook = xlsxwriter.Workbook(path)
         worksheet = workbook.add_worksheet()
         sidewalk.table.to_xlsx(workbook, [2, 50, 10, 2, 10, 2, 10], worksheet=worksheet)
         street.table.to_xlsx(workbook, worksheet=worksheet)
@@ -1505,7 +1514,7 @@ class GeneratePresentation:
                     'ort': { 'label': 'Ort:', 'value': ort },
                     'kreis': { 'label': 'Kreis:', 'value': kreis },
                     'land': { 'label': 'Bundesland:', 'value': land },
-                    'datum': { 'label': 'Abgabedatum:', 'value': QDate.currentDate() },
+                    'datum': { 'label': 'Abgabedatum:', 'value': QDate(1900, 1, 1) },
                     'kunde': { 'label': 'Kunde:', 'value': '' },
                 },
                 {}
