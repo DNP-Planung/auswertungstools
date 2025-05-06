@@ -28,7 +28,7 @@
 	\maketitle
 }
 
-\begin{frame}{Struktur und Inhalt der Lieferung \Ort}
+\begin{frame}{\Ort: Struktur und Inhalt der Lieferung}
 	\begin{bulletlist}{5pt}
 		\item Kartenüberblick inklusive von uns gezeichneter Polygone
 			\begin{bulletlist}{3pt}
@@ -52,44 +52,44 @@
 	\end{bulletlist}
 \end{frame}
 
-\begin{mapframe}{Übersicht}{../Karten/karte.pdf}{.6\linewidth}
+\begin{mapframe}{\Ort: Übersicht}{../Karten/karte.pdf}{.6\linewidth}
 	\scriptsize
 	\begin{itemize}
 		\surfacetypes
 	\end{itemize}
 \end{mapframe}
 
-\begin{mapframe}{Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
+\begin{mapframe}{\Ort: Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
-		\node[inner sep=0] (bild1) at (0,0) {\includegraphics[width=4cm]{../Bilder/fotopunkt1.pdf}};
+		\node[inner sep=0] (bild1) at (0,0) {\includegraphics[width=4cm]{../Bilder/innenstadt-karte.png}};
 	} \\[.3cm]
 	\includegraphics[width=4cm]{../Bilder/innenstadt.png} \\
 	\scriptsize \bildeins
 	\zoomtriangle{1}{bild1}
 \end{mapframe}
 
-\begin{mapframe}{Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
+\begin{mapframe}{\Ort: Typische Bilder}{../Karten/karte.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
-		\node[inner sep=0] (bild2) at (0,0) {\includegraphics[width=4cm]{../Bilder/fotopunkt2.pdf}};
+		\node[inner sep=0] (bild2) at (0,0) {\includegraphics[width=4cm]{../Bilder/wohnsiedlung-karte.png}};
 	} \\[.3cm]
 	\includegraphics[width=4cm]{../Bilder/wohnsiedlung.png} \\
 	\scriptsize \bildzwei
 	\zoomtriangle{2}{bild2}
 \end{mapframe}
 
-\begin{mapframe}{Besonderheit}{../Karten/karte.pdf}{.55\textwidth}
+\begin{mapframe}{\Ort: Besonderheit}{../Karten/karte.pdf}{.55\textwidth}
 	\centering
 	\tikz[remember picture]{
-		\node[inner sep=0] (bild3) at (0,0) {\includegraphics[width=4cm]{../Bilder/fotopunkt3.pdf}};
+		\node[inner sep=0] (bild3) at (0,0) {\includegraphics[width=4cm]{../Bilder/besonderheit-karte.png}};
 	} \\[.3cm]
 	\includegraphics[width=4cm]{../Bilder/besonderheit.png} \\
 	\scriptsize \bilddrei
 	\zoomtriangle{3}{bild3}
 \end{mapframe}
 
-\begin{frame}[t]{Grunddaten für Kostenanalyse}
+\begin{frame}[t]{\Ort: Grunddaten für Kostenanalyse}
 	\scriptsize
 
 	\adjustbox{valign=t}{\begin{minipage}{.49\textwidth}
@@ -122,16 +122,16 @@
 	\end{minipage}}
 \end{frame}
 
-\begin{frame}{Preise \Ort}
+\begin{frame}{\Ort: Preise}
 	\begin{itemize}
 		\setlength{\itemsep}{5pt}
-		\item Kommerzielles Modell
-		\begin{itemize}
-			\preisliste
-		\end{itemize}
 		\item Timing: Abgabe am \Abgabedatum
+		\item Kommerzielles Modell
+		\preisliste
 	\end{itemize}
 \end{frame}
+
+\weiterepolygone
 
 
 \end{document}
