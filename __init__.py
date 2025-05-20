@@ -833,7 +833,8 @@ class GeneratePresentation:
         )
 
         if not extent:
-            extent = self.calculate_extent([self.iface.activeLayer().boundingBoxOfSelected()])
+            extent = self.iface.activeLayer().boundingBoxOfSelected()
+        extent = self.calculate_extent([extent])
 
         if destination and destination[0]:
             self.make_pic_pdf(self.iface.mapCanvas().layers(), destination[0], extent)
@@ -1230,7 +1231,7 @@ class GeneratePresentation:
 
         data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
         data.destination = self.destination_directory
-        data.selection = sorted(selection, key=lambda p: p['Strassenmeter'])
+        data.selection = sorted(selection, key=lambda p: p['Name DNP'])
         data.title = 'Adressen und Trenches auswerten'
 
         self.dialog = EvaluationDialog(
@@ -1350,7 +1351,7 @@ class GeneratePresentation:
 
         data.extent = self.calculate_extent([layer.boundingBoxOfSelected()])
         data.destination = self.destination_directory
-        data.selection = sorted(selection, key=lambda p: p['Strassenmeter'], reverse=True)
+        data.selection = sorted(selection, key=lambda p: p['Name DNP'])
         data.title = 'Oberflächenanalyse auswerten'
 
         self.dialog = EvaluationDialog(
@@ -1475,7 +1476,6 @@ class GeneratePresentation:
             f.write('\\renewcommand\\oberflaechenGesamt{' + summary.to_latex() + '}\n')
 
         Table.offset = 0
-        #workbook = xlsxwriter.Workbook(osp.join(data.destination, "*Oberflächenanalyse.xlsx"))
         path = glob.glob(data.destination + '\\*Oberflächenanalyse.xlsx')
         if len(path) == 0:
             path = osp.join(data.destination, "Oberflächenanalyse.xlsx")
@@ -1498,7 +1498,7 @@ class GeneratePresentation:
         def show_dialog(data, resolve, reject):
             layer = self.iface.activeLayer()
             selection = GeneratePresentation.get_selection_fields(layer, ['Name DNP', 'Kreis', 'Bundesland', 'Strassenmeter'])
-            data.selection = sorted(selection, key=lambda p: p['Name DNP'], reverse=True)
+            data.selection = sorted(selection, key=lambda p: p['Name DNP'])
             feature = data.selection[0]
             ort = feature["Name DNP"]
             kreis = feature["Kreis"]
